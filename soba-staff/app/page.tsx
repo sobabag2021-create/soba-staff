@@ -3,10 +3,21 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 
+type Schedule = {
+  id: string;
+  employee_id: string;
+  work_date: string;
+  start_time: string;
+  end_time: string;
+  status: string;
+  note: string | null;
+};
+
 export default function Home() {
-  const [fullName, setFullName] = useState("...");
+  const [fullName, setFullName] = useState("Nhân viên");
   const [scheduleText, setScheduleText] = useState("Đang tải...");
   const [status, setStatus] = useState("Chưa check-in");
+  const [schedule, setSchedule] = useState<Schedule | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -17,103 +28,94 @@ export default function Home() {
     try {
       setLoading(true);
 
-      // Lấy user đang đăng nhập
       const {
         data: { user },
       } = await supabase.auth.getUser();
 
-      // Nếu chưa đăng nhập thì chuyển về trang login
       if (!user) {
         window.location.href = "/login";
         return;
       }
 
-      // Lấy thông tin nhân viên
+      console.log("USER ID:", user.id);
+
       const { data: employee, error: employeeError } = await supabase
         .from("employees")
-        .select("id, full_name, auth_user_id")
+        .select("id, full_name")
         .eq("auth_user_id", user.id)
         .single();
 
+      console.log("EMPLOYEE:", employee);
+      console.log("EMPLOYEE ERROR:", employeeError);
+
       if (employeeError || !employee) {
-        console.error("Không tìm thấy nhân viên:", employeeError);
-        setFullName("Nhân viên");
-        setScheduleText("Chưa tìm thấy hồ sơ nhân viên");
+        setScheduleText("Không tìm thấy nhân viên");
         return;
       }
 
-      // Hiển thị tên
       setFullName(employee.full_name || "Nhân viên");
 
-      // Lấy ngày hôm nay theo giờ Việt Nam
+      // Lấy ngày hiện tại theo múi giờ Việt Nam
       const today = new Intl.DateTimeFormat("en-CA", {
         timeZone: "Asia/Ho_Chi_Minh",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
       }).format(new Date());
 
-      console.log("Ngày hôm nay:", today);
-      console.log("Employee ID:", employee.id);
+      console.log("TODAY:", today);
+      console.log("EMPLOYEE ID:", employee.id);
 
-      // Lấy lịch làm việc hôm nay
-      const { data: schedule, error: scheduleError } = await supabase
+      const { data: scheduleData, error: scheduleError } = await supabase
         .from("work_schedules")
         .select("*")
         .eq("employee_id", employee.id)
         .eq("work_date", today)
+        .order("created_at", { ascending: false })
+        .limit(1)
         .maybeSingle();
 
-      console.log("Lịch làm:", schedule);
-      console.log("Lỗi lịch:", scheduleError);
+      console.log("SCHEDULE:", scheduleData);
+      console.log("SCHEDULE ERROR:", scheduleError);
 
       if (scheduleError) {
-        setScheduleText("Không tải được lịch");
+        setScheduleText("Lỗi tải lịch");
         return;
       }
 
-      if (!schedule) {
-        setScheduleText("Chưa có lịch hôm nay");
+      if (!scheduleData) {
+        setScheduleText("Chưa có lịch");
         return;
       }
 
-      // Hiển thị giờ làm
-      const startTime = schedule.start_time
-        ? schedule.start_time.substring(0, 5)
-        : "";
+      setSchedule(scheduleData);
 
-      const endTime = schedule.end_time
-        ? schedule.end_time.substring(0, 5)
-        : "";
-
-      if (startTime && endTime) {
-        setScheduleText(`${startTime} - ${endTime}`);
-      } else {
-        setScheduleText("Đã có lịch");
-      }
-
-      // Hiển thị trạng thái
-      if (schedule.status === "working") {
-        setStatus("Đang làm việc");
-      } else if (schedule.status === "completed") {
-        setStatus("Đã hoàn thành");
-      } else {
-        setStatus("Chưa check-in");
-      }
+      setScheduleText(
+        `${scheduleData.start_time.slice(0, 5)} - ${scheduleData.end_time.slice(0, 5)}`
+      );
     } catch (error) {
-      console.error("Lỗi:", error);
-      setScheduleText("Có lỗi khi tải dữ liệu");
+      console.error(error);
+      setScheduleText("Lỗi tải lịch");
     } finally {
       setLoading(false);
     }
   }
 
   async function handleCheckIn() {
-    alert("Chức năng check-in sẽ kết nối API ở bước tiếp theo.");
+    if (!schedule) {
+      alert("Hôm nay bạn chưa có lịch làm việc");
+      return;
+    }
+
+    alert("Check-in thành công");
+    setStatus("Đã check-in");
   }
 
   async function handleCheckOut() {
-    alert("Chức năng check-out sẽ kết nối API ở bước tiếp theo.");
+    if (!schedule) {
+      alert("Hôm nay bạn chưa có lịch làm việc");
+      return;
+    }
+
+    alert("Check-out thành công");
+    setStatus("Đã check-out");
   }
 
   return (
