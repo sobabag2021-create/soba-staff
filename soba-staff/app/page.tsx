@@ -3,36 +3,48 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 
+type Employee = {
+  id: string;
+  full_name: string;
+};
+
 type Attendance = {
   id: string;
-  user_id: string;
-  check_in_time: string | null;
-  check_out_time: string | null;
-  fine_amount: number | null;
+  employee_id: string;
+  work_date: string;
+  check_in: string | null;
+  check_out: string | null;
   late_minutes: number | null;
+  makeup_minutes: number | null;
+  penalty_amount: number | null;
+  status: string | null;
 };
 
 export default function Home() {
-  const [userName, setUserName] = useState("Nhân viên");
-  const [userId, setUserId] = useState<string | null>(null);
-
+  const [employee, setEmployee] = useState<Employee | null>(null);
   const [attendance, setAttendance] = useState<Attendance | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [checkingIn, setCheckingIn] = useState(false);
   const [checkingOut, setCheckingOut] = useState(false);
 
-  // Lấy thời gian hiện tại
-  const getVietnamTime = () => {
-    return new Intl.DateTimeFormat("en-CA", {
+  // Lấy ngày hiện tại theo giờ Việt Nam: YYYY-MM-DD
+  const getVietnamDate = () => {
+    const parts = new Intl.DateTimeFormat("en-CA", {
       timeZone: "Asia/Ho_Chi_Minh",
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
-    }).format(new Date());
+    }).formatToParts(new Date());
+
+    const year = parts.find((p) => p.type === "year")?.value;
+    const month = parts.find((p) => p.type === "month")?.value;
+    const day = parts.find((p) => p.type === "day")?.value;
+
+    return `${year}-${month}-${day}`;
   };
 
-  // Hiển thị giờ
+  // Hiển thị giờ Việt Nam
   const formatTime = (time: string | null) => {
     if (!time) return "--:--";
 
@@ -40,67 +52,58 @@ export default function Home() {
       timeZone: "Asia/Ho_Chi_Minh",
       hour: "2-digit",
       minute: "2-digit",
+      hour12: false,
     }).format(new Date(time));
   };
 
-  // Lấy thông tin người dùng và trạng thái chấm công
+  // Tải dữ liệu
   const loadData = async () => {
     try {
       setLoading(true);
 
+      // 1. Lấy user đang đăng nhập
       const {
         data: { user },
-        error: userError,
+        error: authError,
       } = await supabase.auth.getUser();
 
-      if (userError || !user) {
+      if (authError || !user) {
         window.location.href = "/login";
         return;
       }
 
-      setUserId(user.id);
+      // 2. Tìm nhân viên có auth_user_id = user.id
+      const { data: employeeData, error: employeeError } = await supabase
+        .from("employees")
+        .select("id, full_name")
+        .eq("auth_user_id", user.id)
+        .single();
 
-      const name =
-        user.user_metadata?.full_name ||
-        user.user_metadata?.name ||
-        user.email?.split("@")[0] ||
-        "Nhân viên";
-
-      setUserName(name);
-
-      // Lấy đầu ngày theo giờ Việt Nam
-      const now = new Date();
-
-      const vietnamDate = new Intl.DateTimeFormat("en-CA", {
-        timeZone: "Asia/Ho_Chi_Minh",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-      }).format(now);
-
-      const startOfDay = new Date(
-        `${vietnamDate}T00:00:00+07:00`
-      ).toISOString();
-
-      const endOfDay = new Date(
-        `${vietnamDate}T23:59:59+07:00`
-      ).toISOString();
-
-      const { data, error } = await supabase
-        .from("attendance")
-        .select("*")
-        .eq("user_id", user.id)
-        .gte("check_in_time", startOfDay)
-        .lte("check_in_time", endOfDay)
-        .order("check_in_time", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (error) {
-        console.error("Lỗi tải dữ liệu:", error.message);
+      if (employeeError || !employeeData) {
+        alert(
+          "Không tìm thấy thông tin nhân viên. Vui lòng kiểm tra bảng employees."
+        );
+        return;
       }
 
-      setAttendance(data);
+      setEmployee(employeeData);
+
+      // 3. Lấy ngày hôm nay
+      const today = getVietnamDate();
+
+      // 4. Kiểm tra hôm nay đã có bản ghi chấm công chưa
+      const { data: attendanceData, error: attendanceError } = await supabase
+        .from("attendance")
+        .select("*")
+        .eq("employee_id", employeeData.id)
+        .eq("work_date", today)
+        .maybeSingle();
+
+      if (attendanceError) {
+        console.error(attendanceError);
+      }
+
+      setAttendance(attendanceData);
     } catch (error) {
       console.error(error);
     } finally {
@@ -114,12 +117,12 @@ export default function Home() {
 
   // CHECK IN
   const handleCheckIn = async () => {
-    if (!userId) {
-      alert("Không tìm thấy thông tin đăng nhập");
+    if (!employee) {
+      alert("Chưa tìm thấy thông tin nhân viên");
       return;
     }
 
-    if (attendance?.check_in_time) {
+    if (attendance?.check_in) {
       alert("Bạn đã check-in hôm nay rồi");
       return;
     }
@@ -127,19 +130,43 @@ export default function Home() {
     try {
       setCheckingIn(true);
 
-      // QUAN TRỌNG:
-      // Dùng ngày + giờ đầy đủ dạng ISO
-      // Không dùng chỉ "21:22"
       const now = new Date().toISOString();
+      const today = getVietnamDate();
 
+      // Nếu đã có bản ghi attendance nhưng chưa check-in
+      if (attendance) {
+        const { data, error } = await supabase
+          .from("attendance")
+          .update({
+            check_in: now,
+            status: "working",
+          })
+          .eq("id", attendance.id)
+          .select()
+          .single();
+
+        if (error) {
+          alert("Không thể check-in: " + error.message);
+          return;
+        }
+
+        setAttendance(data);
+        alert("Check-in thành công!");
+        return;
+      }
+
+      // Nếu chưa có bản ghi hôm nay thì tạo mới
       const { data, error } = await supabase
         .from("attendance")
         .insert([
           {
-            user_id: userId,
-            check_in_time: now,
-            fine_amount: 0,
+            employee_id: employee.id,
+            work_date: today,
+            check_in: now,
             late_minutes: 0,
+            makeup_minutes: 0,
+            penalty_amount: 0,
+            status: "working",
           },
         ])
         .select()
@@ -169,7 +196,7 @@ export default function Home() {
       return;
     }
 
-    if (attendance.check_out_time) {
+    if (attendance.check_out) {
       alert("Bạn đã check-out rồi");
       return;
     }
@@ -177,13 +204,13 @@ export default function Home() {
     try {
       setCheckingOut(true);
 
-      // Dùng ngày + giờ đầy đủ
       const now = new Date().toISOString();
 
       const { data, error } = await supabase
         .from("attendance")
         .update({
-          check_out_time: now,
+          check_out: now,
+          status: "completed",
         })
         .eq("id", attendance.id)
         .select()
@@ -206,14 +233,14 @@ export default function Home() {
     }
   };
 
-  const checkedIn = !!attendance?.check_in_time;
-  const checkedOut = !!attendance?.check_out_time;
+  const checkedIn = !!attendance?.check_in;
+  const checkedOut = !!attendance?.check_out;
 
   if (loading) {
     return (
       <main className="container">
         <h1>SOBA STAFF</h1>
-        <p>Đang tải...</p>
+        <p>Đang tải dữ liệu...</p>
       </main>
     );
   }
@@ -224,7 +251,7 @@ export default function Home() {
 
       <section className="card">
         <h2>
-          Xin chào, chị {userName} 👋
+          Xin chào, {employee?.full_name || "Nhân viên"} 👋
         </h2>
 
         <div className="row">
@@ -237,9 +264,7 @@ export default function Home() {
 
           <strong>
             {!checkedIn && "Chưa check-in"}
-
-            {checkedIn && !checkedOut && "Đã check-in"}
-
+            {checkedIn && !checkedOut && "Đang làm việc"}
             {checkedIn && checkedOut && "Đã hoàn thành"}
           </strong>
         </div>
@@ -247,18 +272,14 @@ export default function Home() {
         {checkedIn && (
           <div className="row">
             <span>Giờ check-in</span>
-            <strong>
-              {formatTime(attendance?.check_in_time || null)}
-            </strong>
+            <strong>{formatTime(attendance.check_in)}</strong>
           </div>
         )}
 
         {checkedOut && (
           <div className="row">
             <span>Giờ check-out</span>
-            <strong>
-              {formatTime(attendance?.check_out_time || null)}
-            </strong>
+            <strong>{formatTime(attendance.check_out)}</strong>
           </div>
         )}
       </section>
@@ -289,13 +310,12 @@ export default function Home() {
         </button>
 
         <p>
-          {!checkedIn &&
-            "Check-in để bắt đầu ghi nhận thời gian làm việc."}
-
-          {checkedIn && !checkedOut &&
+          {!checkedIn && "Check-in để bắt đầu ghi nhận thời gian làm việc."}
+          {checkedIn &&
+            !checkedOut &&
             "Bạn đang trong ca làm việc."}
-
-          {checkedIn && checkedOut &&
+          {checkedIn &&
+            checkedOut &&
             "Bạn đã hoàn thành ca làm việc hôm nay."}
         </p>
       </section>
