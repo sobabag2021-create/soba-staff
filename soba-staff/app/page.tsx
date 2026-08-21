@@ -9,121 +9,94 @@ type Schedule = {
   work_date: string;
   start_time: string;
   end_time: string;
-  status: string;
-  note: string | null;
+  status: string | null;
 };
 
-// Lấy ngày hiện tại theo giờ Việt Nam: YYYY-MM-DD
-function getVietnamDate() {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Ho_Chi_Minh",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
-
-  const year = parts.find((item) => item.type === "year")?.value;
-  const month = parts.find((item) => item.type === "month")?.value;
-  const day = parts.find((item) => item.type === "day")?.value;
-
-  return `${year}-${month}-${day}`;
-}
-
-// Lấy giờ hiện tại theo giờ Việt Nam: HH:MM
-function getVietnamTime() {
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Asia/Ho_Chi_Minh",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(new Date());
-}
-
-// Cộng số phút vào thời gian
-function addMinutes(time: string, minutes: number) {
-  const [hour, minute] = time.slice(0, 5).split(":").map(Number);
-
-  const totalMinutes = hour * 60 + minute + minutes;
-
-  const newHour = Math.floor(totalMinutes / 60) % 24;
-  const newMinute = totalMinutes % 60;
-
-  return `${String(newHour).padStart(2, "0")}:${String(
-    newMinute
-  ).padStart(2, "0")}`;
-}
+type Attendance = {
+  id: string;
+  employee_id: string;
+  schedule_id: string | null;
+  work_date: string;
+  check_in_time: string | null;
+  check_out_time: string | null;
+  late_minutes: number | null;
+  fine_amount: number | null;
+};
 
 export default function Home() {
   const [fullName, setFullName] = useState("Nhân viên");
-  const [scheduleText, setScheduleText] = useState("Đang tải...");
-  const [statusText, setStatusText] = useState("Chưa check-in");
+  const [employeeId, setEmployeeId] = useState<string | null>(null);
 
   const [schedule, setSchedule] = useState<Schedule | null>(null);
+  const [attendance, setAttendance] = useState<Attendance | null>(null);
 
-  const [checkInTime, setCheckInTime] = useState("");
-  const [lateMinutes, setLateMinutes] = useState(0);
-  const [fineAmount, setFineAmount] = useState(0);
-  const [minimumCheckOut, setMinimumCheckOut] = useState("");
-
-  const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
-  const [checkingIn, setCheckingIn] = useState(false);
+  const [message, setMessage] = useState("");
 
   useEffect(() => {
     loadData();
   }, []);
 
+  function getToday() {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Ho_Chi_Minh",
+    }).format(new Date());
+  }
+
+  function getVietnamTime() {
+    return new Date(
+      new Date().toLocaleString("en-US", {
+        timeZone: "Asia/Ho_Chi_Minh",
+      })
+    );
+  }
+
+  function formatTime(date: Date) {
+    return date.toLocaleTimeString("vi-VN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+  }
+
   async function loadData() {
     try {
       setLoading(true);
-      setMessage("");
 
-      // Lấy user đang đăng nhập
       const {
         data: { user },
         error: userError,
       } = await supabase.auth.getUser();
 
-      console.log("USER:", user);
-      console.log("USER ERROR:", userError);
-
-      if (!user) {
-        setMessage("Bạn chưa đăng nhập");
-        setScheduleText("Chưa đăng nhập");
+      if (userError || !user) {
+        window.location.href = "/login";
         return;
       }
 
-      // Tìm nhân viên tương ứng với tài khoản đăng nhập
+      // Lấy nhân viên
       const { data: employee, error: employeeError } = await supabase
         .from("employees")
-        .select("id, full_name, auth_user_id")
+        .select("id, full_name")
         .eq("auth_user_id", user.id)
         .maybeSingle();
 
-      console.log("EMPLOYEE:", employee);
-      console.log("EMPLOYEE ERROR:", employeeError);
-
       if (employeeError) {
-        setMessage("Lỗi tải thông tin nhân viên");
-        setScheduleText("Lỗi");
+        console.error("Lỗi nhân viên:", employeeError);
+        setMessage("Không thể tải thông tin nhân viên");
         return;
       }
 
       if (!employee) {
-        setMessage("Không tìm thấy nhân viên");
-        setScheduleText("Không tìm thấy nhân viên");
+        setMessage("Không tìm thấy tài khoản nhân viên");
         return;
       }
 
+      setEmployeeId(employee.id);
       setFullName(employee.full_name || "Nhân viên");
 
-      // Lấy ngày hôm nay theo giờ Việt Nam
-      const today = getVietnamDate();
+      const today = getToday();
 
-      console.log("NGÀY ĐANG TÌM:", today);
-      console.log("EMPLOYEE ID:", employee.id);
-
-      // Lấy lịch làm việc hôm nay
+      // Lấy lịch làm hôm nay
       const { data: scheduleData, error: scheduleError } = await supabase
         .from("work_schedules")
         .select("*")
@@ -133,32 +106,35 @@ export default function Home() {
         .limit(1)
         .maybeSingle();
 
-      console.log("SCHEDULE:", scheduleData);
-      console.log("SCHEDULE ERROR:", scheduleError);
-
       if (scheduleError) {
-        setMessage(`Lỗi tải lịch: ${scheduleError.message}`);
-        setScheduleText("Lỗi tải lịch");
+        console.error("Lỗi lịch:", scheduleError);
+        setMessage("Lỗi tải lịch làm việc");
         return;
       }
 
-      if (!scheduleData) {
-        setScheduleText("Chưa có lịch");
-        setMessage(`Không tìm thấy lịch ngày ${today}`);
-        return;
+      if (scheduleData) {
+        setSchedule(scheduleData);
       }
 
-      setSchedule(scheduleData);
+      // Lấy dữ liệu chấm công hôm nay
+      const { data: attendanceData, error: attendanceError } = await supabase
+        .from("attendance")
+        .select("*")
+        .eq("employee_id", employee.id)
+        .eq("work_date", today)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-      const start = String(scheduleData.start_time).slice(0, 5);
-      const end = String(scheduleData.end_time).slice(0, 5);
+      if (attendanceError) {
+        console.error("Lỗi attendance:", attendanceError);
+      }
 
-      setScheduleText(`${start} - ${end}`);
-      setMessage("");
+      if (attendanceData) {
+        setAttendance(attendanceData);
+      }
     } catch (error) {
-      console.error("LOAD ERROR:", error);
-
-      setScheduleText("Lỗi tải lịch");
+      console.error(error);
       setMessage("Có lỗi xảy ra khi tải dữ liệu");
     } finally {
       setLoading(false);
@@ -167,91 +143,163 @@ export default function Home() {
 
   async function handleCheckIn() {
     try {
-      setCheckingIn(true);
       setMessage("");
 
-      // Chưa có lịch thì không check-in
+      if (!employeeId) {
+        alert("Không tìm thấy thông tin nhân viên");
+        return;
+      }
+
       if (!schedule) {
-        setMessage("Hôm nay bạn chưa có lịch làm việc");
+        alert("Hôm nay bạn chưa có lịch làm việc");
         return;
       }
 
-      // Nếu đã check-in rồi
-      if (checkInTime) {
-        setMessage("Bạn đã check-in rồi");
+      if (attendance?.check_in_time) {
+        alert("Bạn đã check-in rồi");
         return;
       }
 
-      const nowTime = getVietnamTime();
+      const now = getVietnamTime();
+      const today = getToday();
+      const currentTime = formatTime(now);
 
-      const currentTime = nowTime
-        .split(":")
-        .map(Number);
-
-      const startTime = String(schedule.start_time)
+      // Giờ bắt đầu ca
+      const [startHour, startMinute] = schedule.start_time
         .slice(0, 5)
         .split(":")
         .map(Number);
 
-      const currentTotal =
-        currentTime[0] * 60 + currentTime[1];
+      const workStart = new Date(now);
+      workStart.setHours(startHour, startMinute, 0, 0);
 
-      const startTotal =
-        startTime[0] * 60 + startTime[1];
+      // Tính đi muộn
+      let lateMinutes = 0;
 
-      // Tính số phút đi muộn
-      const late =
-        currentTotal > startTotal
-          ? currentTotal - startTotal
-          : 0;
+      if (now > workStart) {
+        lateMinutes = Math.floor(
+          (now.getTime() - workStart.getTime()) / 60000
+        );
+      }
 
-      // Quy định phạt:
-      // Muộn từ 10 phút trở lên: phạt 50.000đ
-      const fine =
-        late >= 10
-          ? 50000
-          : 0;
+      // Mức phạt
+      // Ví dụ: đi muộn > 0 phút = phạt 50.000đ
+      let fineAmount = 0;
 
-      // Check out tối thiểu =
-      // Giờ kết thúc ca + số phút đi muộn
-      const minimumCheckOutTime = addMinutes(
-        String(schedule.end_time),
-        late
-      );
+      if (lateMinutes > 0) {
+        fineAmount = 50000;
+      }
 
-      // Cập nhật giao diện
-      setCheckInTime(nowTime);
-      setLateMinutes(late);
-      setFineAmount(fine);
-      setMinimumCheckOut(minimumCheckOutTime);
+      const { data, error } = await supabase
+        .from("attendance")
+        .insert({
+          employee_id: employeeId,
+          schedule_id: schedule.id,
+          work_date: today,
+          check_in_time: currentTime,
+          late_minutes: lateMinutes,
+          fine_amount: fineAmount,
+        })
+        .select()
+        .single();
 
-      setStatusText("Đã check-in");
+      if (error) {
+        console.error("CHECK IN ERROR:", error);
+        alert("Không thể check-in: " + error.message);
+        return;
+      }
 
-      setMessage("Check-in thành công");
+      setAttendance(data);
+
+      alert("Check-in thành công");
     } catch (error) {
-      console.error("CHECK IN ERROR:", error);
-
-      setMessage("Check-in thất bại");
-    } finally {
-      setCheckingIn(false);
+      console.error(error);
+      alert("Có lỗi xảy ra khi check-in");
     }
   }
 
-  function handleCheckOut() {
-    if (!schedule) {
-      setMessage("Hôm nay bạn chưa có lịch làm việc");
-      return;
+  async function handleCheckOut() {
+    try {
+      if (!attendance?.id) {
+        alert("Bạn chưa check-in");
+        return;
+      }
+
+      if (attendance.check_out_time) {
+        alert("Bạn đã check-out rồi");
+        return;
+      }
+
+      const now = getVietnamTime();
+      const currentTime = formatTime(now);
+
+      const { data, error } = await supabase
+        .from("attendance")
+        .update({
+          check_out_time: currentTime,
+        })
+        .eq("id", attendance.id)
+        .select()
+        .single();
+
+      if (error) {
+        console.error("CHECK OUT ERROR:", error);
+        alert("Không thể check-out: " + error.message);
+        return;
+      }
+
+      setAttendance(data);
+
+      alert("Check-out thành công");
+    } catch (error) {
+      console.error(error);
+      alert("Có lỗi xảy ra khi check-out");
     }
+  }
 
-    if (!checkInTime) {
-      setMessage("Bạn cần check-in trước");
-      return;
-    }
+  function getMinimumCheckOut() {
+    if (!schedule || !attendance?.check_in_time) return "--:--";
 
-    const nowTime = getVietnamTime();
+    const [checkInHour, checkInMinute] = attendance.check_in_time
+      .slice(0, 5)
+      .split(":")
+      .map(Number);
 
-    setStatusText(`Đã check-out lúc ${nowTime}`);
-    setMessage("Check-out thành công");
+    const [startHour, startMinute] = schedule.start_time
+      .slice(0, 5)
+      .split(":")
+      .map(Number);
+
+    const [endHour, endMinute] = schedule.end_time
+      .slice(0, 5)
+      .split(":")
+      .map(Number);
+
+    const scheduledMinutes =
+      endHour * 60 +
+      endMinute -
+      (startHour * 60 + startMinute);
+
+    const checkInMinutes = checkInHour * 60 + checkInMinute;
+
+    const minimumMinutes = checkInMinutes + scheduledMinutes;
+
+    const hour = Math.floor(minimumMinutes / 60);
+    const minute = minimumMinutes % 60;
+
+    return `${String(hour).padStart(2, "0")}:${String(minute).padStart(
+      2,
+      "0"
+    )}`;
+  }
+
+  function getScheduleText() {
+    if (!schedule) return "Chưa có lịch";
+
+    return `${schedule.start_time.slice(
+      0,
+      5
+    )} - ${schedule.end_time.slice(0, 5)}`;
   }
 
   return (
@@ -265,65 +313,77 @@ export default function Home() {
           <span>Ca hôm nay</span>
 
           <b>
-            {loading
-              ? "Đang tải..."
-              : scheduleText}
+            {loading ? "Đang tải..." : getScheduleText()}
           </b>
         </div>
 
         <div className="row">
           <span>Trạng thái</span>
 
-          <b>{statusText}</b>
+          <b>
+            {!attendance
+              ? "Chưa check-in"
+              : attendance.check_out_time
+              ? "Đã check-out"
+              : "Đã check-in"}
+          </b>
         </div>
       </div>
 
-      <button
-        onClick={handleCheckIn}
-        disabled={checkingIn}
-      >
-        {checkingIn
-          ? "ĐANG CHECK-IN..."
-          : "CHECK IN"}
-      </button>
+      {!attendance?.check_in_time && (
+        <button onClick={handleCheckIn} disabled={loading}>
+          CHECK IN
+        </button>
+      )}
 
-      {checkInTime && (
+      {attendance?.check_in_time && (
         <div className="card">
           <h2>Thông tin check-in</h2>
 
           <div className="row">
             <span>Check in</span>
-            <b>{checkInTime}</b>
+            <b>{attendance.check_in_time.slice(0, 5)}</b>
           </div>
 
           <div className="row">
             <span>Đi muộn</span>
-            <b>{lateMinutes} phút</b>
+            <b>{attendance.late_minutes || 0} phút</b>
           </div>
 
           <div className="row">
             <span>Phạt</span>
 
             <b>
-              {fineAmount.toLocaleString("vi-VN")}đ
+              {Number(attendance.fine_amount || 0).toLocaleString(
+                "vi-VN"
+              )}
+              đ
             </b>
           </div>
 
           <div className="row">
             <span>Check out tối thiểu</span>
-            <b>{minimumCheckOut}</b>
+            <b>{getMinimumCheckOut()}</b>
           </div>
         </div>
       )}
 
       <div className="card">
-        <button onClick={handleCheckOut}>
-          CHECK OUT
+        <button
+          onClick={handleCheckOut}
+          disabled={!attendance?.check_in_time || !!attendance?.check_out_time}
+        >
+          {attendance?.check_out_time
+            ? "ĐÃ CHECK OUT"
+            : "CHECK OUT"}
         </button>
 
-        {message && (
-          <p>{message}</p>
-        )}
+        <p>
+          {message ||
+            (attendance?.check_out_time
+              ? `Check-out lúc ${attendance.check_out_time.slice(0, 5)}`
+              : "Check-in để bắt đầu ghi nhận thời gian làm việc.")}
+        </p>
       </div>
     </main>
   );
