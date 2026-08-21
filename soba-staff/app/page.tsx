@@ -11,68 +11,45 @@ type Employee = {
 type Attendance = {
   id: string;
   employee_id: string;
+  schedule_id: string | null;
   work_date: string;
   check_in: string | null;
   check_out: string | null;
   late_minutes: number | null;
   makeup_minutes: number | null;
   penalty_amount: number | null;
-  status: string | null;
+  fine_amount?: number | null;
+  status: string;
 };
 
 export default function Home() {
   const [employee, setEmployee] = useState<Employee | null>(null);
   const [attendance, setAttendance] = useState<Attendance | null>(null);
-
   const [loading, setLoading] = useState(true);
-  const [checkingIn, setCheckingIn] = useState(false);
-  const [checkingOut, setCheckingOut] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
 
-  // Lấy ngày hiện tại theo giờ Việt Nam: YYYY-MM-DD
-  const getVietnamDate = () => {
-    const parts = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Asia/Ho_Chi_Minh",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).formatToParts(new Date());
+  const today = new Date().toISOString().split("T")[0];
 
-    const year = parts.find((p) => p.type === "year")?.value;
-    const month = parts.find((p) => p.type === "month")?.value;
-    const day = parts.find((p) => p.type === "day")?.value;
+  useEffect(() => {
+    loadData();
+  }, []);
 
-    return `${year}-${month}-${day}`;
-  };
-
-  // Hiển thị giờ Việt Nam
-  const formatTime = (time: string | null) => {
-    if (!time) return "--:--";
-
-    return new Intl.DateTimeFormat("vi-VN", {
-      timeZone: "Asia/Ho_Chi_Minh",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).format(new Date(time));
-  };
-
-  // Tải dữ liệu
-  const loadData = async () => {
+  async function loadData() {
     try {
       setLoading(true);
 
-      // 1. Lấy user đang đăng nhập
+      // Lấy user đang đăng nhập
       const {
         data: { user },
-        error: authError,
+        error: userError,
       } = await supabase.auth.getUser();
 
-      if (authError || !user) {
+      if (userError || !user) {
         window.location.href = "/login";
         return;
       }
 
-      // 2. Tìm nhân viên có auth_user_id = user.id
+      // Lấy nhân viên theo auth_user_id
       const { data: employeeData, error: employeeError } = await supabase
         .from("employees")
         .select("id, full_name")
@@ -81,17 +58,15 @@ export default function Home() {
 
       if (employeeError || !employeeData) {
         alert(
-          "Không tìm thấy thông tin nhân viên. Vui lòng kiểm tra bảng employees."
+          "Không tìm thấy thông tin nhân viên: " +
+            (employeeError?.message || "")
         );
         return;
       }
 
       setEmployee(employeeData);
 
-      // 3. Lấy ngày hôm nay
-      const today = getVietnamDate();
-
-      // 4. Kiểm tra hôm nay đã có bản ghi chấm công chưa
+      // Lấy bản ghi chấm công hôm nay
       const { data: attendanceData, error: attendanceError } = await supabase
         .from("attendance")
         .select("*")
@@ -103,22 +78,21 @@ export default function Home() {
         console.error(attendanceError);
       }
 
-      setAttendance(attendanceData);
-    } catch (error) {
-      console.error(error);
+      if (attendanceData) {
+        setAttendance(attendanceData);
+      } else {
+        setAttendance(null);
+      }
+    } catch (error: any) {
+      alert("Có lỗi xảy ra: " + error.message);
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  // CHECK IN
-  const handleCheckIn = async () => {
+  async function handleCheckIn() {
     if (!employee) {
-      alert("Chưa tìm thấy thông tin nhân viên");
+      alert("Chưa tải được thông tin nhân viên");
       return;
     }
 
@@ -128,81 +102,74 @@ export default function Home() {
     }
 
     try {
-      setCheckingIn(true);
+      setActionLoading(true);
 
       const now = new Date().toISOString();
-      const today = getVietnamDate();
 
-      // Nếu đã có bản ghi attendance nhưng chưa check-in
+      // Nếu đã có attendance hôm nay nhưng chưa check-in
       if (attendance) {
         const { data, error } = await supabase
           .from("attendance")
           .update({
             check_in: now,
-            status: "working",
+            status: "checked_in",
           })
           .eq("id", attendance.id)
           .select()
           .single();
 
-        if (error) {
-          alert("Không thể check-in: " + error.message);
-          return;
-        }
+        if (error) throw error;
 
         setAttendance(data);
         alert("Check-in thành công!");
-        return;
-      }
-
-      // Nếu chưa có bản ghi hôm nay thì tạo mới
-      const { data, error } = await supabase
-        .from("attendance")
-        .insert([
-          {
+      } else {
+        // Tạo bản ghi chấm công mới
+        const { data, error } = await supabase
+          .from("attendance")
+          .insert({
             employee_id: employee.id,
             work_date: today,
             check_in: now,
+            status: "checked_in",
             late_minutes: 0,
             makeup_minutes: 0,
             penalty_amount: 0,
-            status: "working",
-          },
-        ])
-        .select()
-        .single();
+            fine_amount: 0,
+          })
+          .select()
+          .single();
 
-      if (error) {
-        console.error(error);
-        alert("Không thể check-in: " + error.message);
-        return;
+        if (error) throw error;
+
+        setAttendance(data);
+        alert("Check-in thành công!");
       }
-
-      setAttendance(data);
-
-      alert("Check-in thành công!");
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      alert("Có lỗi xảy ra khi check-in");
+      alert("Không thể check-in: " + error.message);
     } finally {
-      setCheckingIn(false);
+      setActionLoading(false);
     }
-  };
+  }
 
-  // CHECK OUT
-  const handleCheckOut = async () => {
-    if (!attendance?.id) {
+  async function handleCheckOut() {
+    if (!employee) {
+      alert("Chưa tải được thông tin nhân viên");
+      return;
+    }
+
+    if (!attendance || !attendance.check_in) {
       alert("Bạn chưa check-in");
       return;
     }
 
     if (attendance.check_out) {
-      alert("Bạn đã check-out rồi");
+      alert("Bạn đã check-out hôm nay rồi");
       return;
     }
 
     try {
-      setCheckingOut(true);
+      setActionLoading(true);
 
       const now = new Date().toISOString();
 
@@ -210,115 +177,115 @@ export default function Home() {
         .from("attendance")
         .update({
           check_out: now,
-          status: "completed",
+          status: "checked_out",
         })
         .eq("id", attendance.id)
         .select()
         .single();
 
-      if (error) {
-        console.error(error);
-        alert("Không thể check-out: " + error.message);
-        return;
-      }
+      if (error) throw error;
 
       setAttendance(data);
-
       alert("Check-out thành công!");
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      alert("Có lỗi xảy ra khi check-out");
+      alert("Không thể check-out: " + error.message);
     } finally {
-      setCheckingOut(false);
+      setActionLoading(false);
     }
-  };
+  }
 
-  const checkedIn = !!attendance?.check_in;
-  const checkedOut = !!attendance?.check_out;
+  function formatTime(value: string | null) {
+    if (!value) return "--:--";
+
+    return new Date(value).toLocaleTimeString("vi-VN", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
+  function getStatusText() {
+    if (attendance?.check_out) {
+      return "Đã check-out";
+    }
+
+    if (attendance?.check_in) {
+      return "Đã check-in";
+    }
+
+    return "Chưa check-in";
+  }
 
   if (loading) {
     return (
-      <main className="container">
+      <main>
         <h1>SOBA STAFF</h1>
-        <p>Đang tải dữ liệu...</p>
+        <p>Đang tải...</p>
       </main>
     );
   }
 
   return (
-    <main className="container">
+    <main>
       <h1>SOBA STAFF</h1>
 
-      <section className="card">
-        <h2>
-          Xin chào, {employee?.full_name || "Nhân viên"} 👋
-        </h2>
+      <div className="card">
+        <h2>Xin chào, {employee?.full_name || "nhân viên"} 👋</h2>
 
         <div className="row">
           <span>Ca hôm nay</span>
-          <strong>00:00 - 23:59</strong>
+          <b>00:00 - 23:59</b>
         </div>
 
         <div className="row">
           <span>Trạng thái</span>
-
-          <strong>
-            {!checkedIn && "Chưa check-in"}
-            {checkedIn && !checkedOut && "Đang làm việc"}
-            {checkedIn && checkedOut && "Đã hoàn thành"}
-          </strong>
+          <b>{getStatusText()}</b>
         </div>
 
-        {checkedIn && (
+        {attendance?.check_in && (
           <div className="row">
             <span>Giờ check-in</span>
-            <strong>{formatTime(attendance.check_in)}</strong>
+            <b>{formatTime(attendance.check_in)}</b>
           </div>
         )}
 
-        {checkedOut && (
+        {attendance?.check_out && (
           <div className="row">
             <span>Giờ check-out</span>
-            <strong>{formatTime(attendance.check_out)}</strong>
+            <b>{formatTime(attendance.check_out)}</b>
           </div>
         )}
-      </section>
+      </div>
 
       <button
         className="check-button"
         onClick={handleCheckIn}
-        disabled={checkingIn || checkedIn}
+        disabled={actionLoading || !!attendance?.check_in}
       >
-        {checkingIn
-          ? "ĐANG CHECK IN..."
-          : checkedIn
-          ? "ĐÃ CHECK IN"
-          : "CHECK IN"}
+        {actionLoading ? "ĐANG XỬ LÝ..." : "CHECK IN"}
       </button>
 
-      <section className="card checkout-card">
+      <div className="card">
         <button
           className="check-button"
           onClick={handleCheckOut}
-          disabled={checkingOut || !checkedIn || checkedOut}
+          disabled={
+            actionLoading ||
+            !attendance?.check_in ||
+            !!attendance?.check_out
+          }
         >
-          {checkingOut
-            ? "ĐANG CHECK OUT..."
-            : checkedOut
-            ? "ĐÃ CHECK OUT"
-            : "CHECK OUT"}
+          {actionLoading ? "ĐANG XỬ LÝ..." : "CHECK OUT"}
         </button>
 
         <p>
-          {!checkedIn && "Check-in để bắt đầu ghi nhận thời gian làm việc."}
-          {checkedIn &&
-            !checkedOut &&
-            "Bạn đang trong ca làm việc."}
-          {checkedIn &&
-            checkedOut &&
-            "Bạn đã hoàn thành ca làm việc hôm nay."}
+          {!attendance?.check_in
+            ? "Check-in để bắt đầu ghi nhận thời gian làm việc."
+            : attendance?.check_out
+            ? "Bạn đã hoàn thành check-out hôm nay."
+            : "Bạn đang làm việc. Hãy check-out khi kết thúc."}
         </p>
-      </section>
+      </div>
     </main>
   );
 }
