@@ -1,0 +1,4 @@
+"use client"; import {useState} from "react"; import {supabase} from "../../lib/supabase";
+export default function Login(){const[e,se]=useState("");const[p,sp]=useState("");const[m,sm]=useState("");
+async function login(){const{error}=await supabase.auth.signInWithPassword({email:e,password:p});if(error)return sm(error.message);location.href="/"}
+return <main><div className="card"><h1>SOBA STAFF</h1><p className="muted">Đăng nhập nội bộ</p><input placeholder="Email" value={e} onChange={x=>se(x.target.value)}/><input type="password" placeholder="Mật khẩu" value={p} onChange={x=>sp(x.target.value)}/><button onClick={login}>ĐĂNG NHẬP</button>{m&&<p className="danger">{m}</p>}</div></main>}
