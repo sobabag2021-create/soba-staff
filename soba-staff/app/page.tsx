@@ -1,490 +1,253 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { FormEvent, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
-type Employee = {
-  id: string;
-  full_name: string;
-  email: string | null;
-  role: string;
-  employment_type: string;
-};
+export default function LoginPage() {
+  const router = useRouter();
 
-type Schedule = {
-  id: string;
-  employee_id: string;
-  work_date: string;
-  start_time: string;
-  end_time: string;
-  employees: {
-    full_name: string;
-    employment_type: string;
-  } | null;
-};
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
 
-export default function Home() {
-  const [loading, setLoading] = useState(true);
-  const [isResetMode, setIsResetMode] = useState(false);
+  async function handleLogin(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
 
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [resetLoading, setResetLoading] = useState(false);
+    setMessage("");
 
-  const [employees, setEmployees] = useState<Employee[]>([]);
-  const [schedules, setSchedules] = useState<Schedule[]>([]);
+    if (!email.trim() || !password.trim()) {
+      setMessage("Vui lòng nhập email và mật khẩu.");
+      return;
+    }
 
-  const [selectedEmployee, setSelectedEmployee] = useState("");
-  const [workDate, setWorkDate] = useState(
-    new Date().toISOString().split("T")[0]
-  );
-  const [startTime, setStartTime] = useState("07:00");
-  const [endTime, setEndTime] = useState("17:00");
-
-  useEffect(() => {
-    checkUser();
-  }, []);
-
-  async function checkUser() {
     try {
-      const hash = window.location.hash;
+      setLoading(true);
 
-      // Nếu đang mở từ link reset password
-      if (
-        hash.includes("access_token") ||
-        hash.includes("type=recovery") ||
-        hash.includes("type%3Drecovery")
-      ) {
-        setIsResetMode(true);
-        setLoading(false);
+      // Đăng nhập Supabase
+      const { data: authData, error: authError } =
+        await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
+
+      if (authError) {
+        setMessage("Email hoặc mật khẩu không đúng.");
         return;
       }
 
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (!session) {
-        window.location.href = "/login";
+      if (!authData.user) {
+        setMessage("Không tìm thấy thông tin tài khoản.");
         return;
       }
 
-      const { data: employee, error } = await supabase
+      // Tìm thông tin nhân viên trong bảng employees
+      let { data: employee, error: employeeError } = await supabase
         .from("employees")
         .select("*")
-        .eq("auth_user_id", session.user.id)
-        .single();
+        .eq("auth_user_id", authData.user.id)
+        .maybeSingle();
 
-      if (error || !employee) {
-        alert("Không tìm thấy tài khoản nhân viên.");
-        setLoading(false);
+      // Nếu chưa tìm thấy bằng auth_user_id thì thử tìm bằng email
+      if (!employee) {
+        const result = await supabase
+          .from("employees")
+          .select("*")
+          .eq("email", authData.user.email ?? "")
+          .maybeSingle();
+
+        employee = result.data;
+        employeeError = result.error;
+      }
+
+      if (employeeError) {
+        console.error(employeeError);
+        setMessage("Không thể lấy thông tin nhân viên.");
         return;
       }
 
-      if (employee.role !== "admin") {
-        alert("Tài khoản này không có quyền quản trị.");
+      // Nếu chưa có trong bảng employees
+      if (!employee) {
+        setMessage(
+          "Tài khoản đã đăng nhập nhưng chưa được liên kết với nhân viên."
+        );
+        return;
+      }
+
+      // Kiểm tra nhân viên còn hoạt động
+      if (employee.active === false) {
         await supabase.auth.signOut();
-        window.location.href = "/login";
+        setMessage("Tài khoản này hiện đã bị khóa.");
         return;
       }
 
-      await loadData();
-
-      setLoading(false);
-    } catch (error) {
-      console.error(error);
-      setLoading(false);
-    }
-  }
-
-  async function handleResetPassword() {
-    if (!newPassword || !confirmPassword) {
-      alert("Vui lòng nhập đầy đủ mật khẩu.");
-      return;
-    }
-
-    if (newPassword !== confirmPassword) {
-      alert("Mật khẩu xác nhận không khớp.");
-      return;
-    }
-
-    if (newPassword.length < 6) {
-      alert("Mật khẩu phải có ít nhất 6 ký tự.");
-      return;
-    }
-
-    setResetLoading(true);
-
-    try {
-      const { error } = await supabase.auth.updateUser({
-        password: newPassword,
-      });
-
-      if (error) {
-        alert(error.message);
-        setResetLoading(false);
-        return;
-      }
-
-      alert("Đặt lại mật khẩu thành công!");
-
-      await supabase.auth.signOut();
-
-      window.history.replaceState(
-        null,
-        "",
-        window.location.pathname
+      // Lưu thông tin nhân viên để các trang khác sử dụng
+      localStorage.setItem("employee_id", employee.id);
+      localStorage.setItem("employee_name", employee.full_name ?? "");
+      localStorage.setItem("employee_role", employee.role ?? "employee");
+      localStorage.setItem(
+        "employment_type",
+        employee.employment_type ?? "part_time"
       );
 
-      window.location.href = "/login";
+      // Admin vào trang admin
+      if (employee.role === "admin") {
+        router.replace("/");
+      } else {
+        // Employee vào giao diện nhân viên
+        router.replace("/employee");
+      }
     } catch (error) {
       console.error(error);
-      alert("Có lỗi xảy ra khi đặt lại mật khẩu.");
+      setMessage("Có lỗi xảy ra khi đăng nhập. Vui lòng thử lại.");
+    } finally {
+      setLoading(false);
     }
-
-    setResetLoading(false);
   }
 
-  async function loadData() {
-    const { data: employeeData } = await supabase
-      .from("employees")
-      .select("*")
-      .order("full_name");
-
-    setEmployees(employeeData || []);
-
-    const { data: scheduleData } = await supabase
-      .from("work_schedules")
-      .select(`
-        *,
-        employees (
-          full_name,
-          employment_type
-        )
-      `)
-      .order("work_date", { ascending: false });
-
-    setSchedules((scheduleData as Schedule[]) || []);
-  }
-
-  async function createSchedule() {
-    if (!selectedEmployee) {
-      alert("Vui lòng chọn nhân viên.");
-      return;
-    }
-
-    if (!workDate || !startTime || !endTime) {
-      alert("Vui lòng nhập đầy đủ thông tin ca làm.");
-      return;
-    }
-
-    const { error } = await supabase
-      .from("work_schedules")
-      .insert({
-        employee_id: selectedEmployee,
-        work_date: workDate,
-        start_time: startTime,
-        end_time: endTime,
-      });
-
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
-    alert("Đã thêm ca làm việc.");
-
-    setSelectedEmployee("");
-    await loadData();
-  }
-
-  async function deleteSchedule(id: string) {
-    const confirmDelete = confirm("Bạn có chắc muốn xóa ca này?");
-
-    if (!confirmDelete) return;
-
-    const { error } = await supabase
-      .from("work_schedules")
-      .delete()
-      .eq("id", id);
-
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
-    await loadData();
-  }
-
-  if (loading) {
-    return (
-      <main
+  return (
+    <main
+      style={{
+        minHeight: "100vh",
+        background: "#f6f7f5",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "20px",
+        fontFamily: "Arial, sans-serif",
+      }}
+    >
+      <div
         style={{
-          minHeight: "100vh",
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          fontFamily: "Arial",
+          width: "100%",
+          maxWidth: "420px",
+          background: "#ffffff",
+          borderRadius: "20px",
+          padding: "36px 30px",
+          boxShadow: "0 10px 40px rgba(0,0,0,0.08)",
         }}
       >
-        Đang tải...
-      </main>
-    );
-  }
-
-  // =========================
-  // TRANG RESET MẬT KHẨU
-  // =========================
-  if (isResetMode) {
-    return (
-      <main
-        style={{
-          minHeight: "100vh",
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          background: "#f5f5f5",
-          fontFamily: "Arial",
-        }}
-      >
-        <div
-          style={{
-            width: "100%",
-            maxWidth: 400,
-            background: "white",
-            padding: 30,
-            borderRadius: 12,
-            boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
-          }}
-        >
+        <div style={{ textAlign: "center", marginBottom: "30px" }}>
           <h1
             style={{
-              textAlign: "center",
-              marginBottom: 10,
+              margin: 0,
+              fontSize: "28px",
+              color: "#1f2d25",
+              fontWeight: 700,
             }}
           >
-            Đặt lại mật khẩu
+            SOBA STAFF
           </h1>
 
           <p
             style={{
-              textAlign: "center",
-              color: "#666",
-              marginBottom: 25,
+              marginTop: "10px",
+              color: "#777",
+              fontSize: "14px",
             }}
           >
-            Nhập mật khẩu mới cho tài khoản của bạn
+            Đăng nhập để chấm công và xem lịch làm việc
           </p>
+        </div>
 
-          <label>Mật khẩu mới</label>
+        <form onSubmit={handleLogin}>
+          <div style={{ marginBottom: "18px" }}>
+            <label
+              style={{
+                display: "block",
+                marginBottom: "8px",
+                fontSize: "14px",
+                fontWeight: 600,
+                color: "#333",
+              }}
+            >
+              Email
+            </label>
 
-          <input
-            type="password"
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-            placeholder="Nhập mật khẩu mới"
-            style={{
-              width: "100%",
-              padding: 12,
-              marginTop: 8,
-              marginBottom: 20,
-              boxSizing: "border-box",
-              border: "1px solid #ddd",
-              borderRadius: 8,
-            }}
-          />
+            <input
+              type="email"
+              placeholder="Nhập email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
+              style={{
+                width: "100%",
+                padding: "14px",
+                border: "1px solid #ddd",
+                borderRadius: "10px",
+                fontSize: "15px",
+                outline: "none",
+                boxSizing: "border-box",
+              }}
+            />
+          </div>
 
-          <label>Nhập lại mật khẩu</label>
+          <div style={{ marginBottom: "20px" }}>
+            <label
+              style={{
+                display: "block",
+                marginBottom: "8px",
+                fontSize: "14px",
+                fontWeight: 600,
+                color: "#333",
+              }}
+            >
+              Mật khẩu
+            </label>
 
-          <input
-            type="password"
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            placeholder="Nhập lại mật khẩu"
-            style={{
-              width: "100%",
-              padding: 12,
-              marginTop: 8,
-              marginBottom: 25,
-              boxSizing: "border-box",
-              border: "1px solid #ddd",
-              borderRadius: 8,
-            }}
-          />
+            <input
+              type="password"
+              placeholder="Nhập mật khẩu"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              style={{
+                width: "100%",
+                padding: "14px",
+                border: "1px solid #ddd",
+                borderRadius: "10px",
+                fontSize: "15px",
+                outline: "none",
+                boxSizing: "border-box",
+              }}
+            />
+          </div>
+
+          {message && (
+            <div
+              style={{
+                background: "#fff1f1",
+                color: "#c62828",
+                padding: "12px",
+                borderRadius: "10px",
+                fontSize: "14px",
+                marginBottom: "16px",
+              }}
+            >
+              {message}
+            </div>
+          )}
 
           <button
-            onClick={handleResetPassword}
-            disabled={resetLoading}
+            type="submit"
+            disabled={loading}
             style={{
               width: "100%",
-              padding: 14,
-              background: "#1f6b45",
-              color: "white",
               border: "none",
-              borderRadius: 8,
-              cursor: "pointer",
-              fontSize: 16,
+              background: loading ? "#9aaa9d" : "#315f47",
+              color: "#fff",
+              padding: "15px",
+              borderRadius: "10px",
+              fontSize: "16px",
+              fontWeight: 600,
+              cursor: loading ? "not-allowed" : "pointer",
             }}
           >
-            {resetLoading
-              ? "Đang cập nhật..."
-              : "Đặt lại mật khẩu"}
+            {loading ? "Đang đăng nhập..." : "Đăng nhập"}
           </button>
-        </div>
-      </main>
-    );
-  }
-
-  // =========================
-  // TRANG ADMIN
-  // =========================
-  return (
-    <main
-      style={{
-        padding: 30,
-        fontFamily: "Arial",
-        maxWidth: 1200,
-        margin: "0 auto",
-      }}
-    >
-      <h1>QUẢN LÝ CA LÀM VIỆC</h1>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr",
-          gap: 10,
-          marginTop: 20,
-          marginBottom: 30,
-        }}
-      >
-        <select
-          value={selectedEmployee}
-          onChange={(e) => setSelectedEmployee(e.target.value)}
-          style={{ padding: 10 }}
-        >
-          <option value="">Chọn nhân viên</option>
-
-          {employees.map((employee) => (
-            <option
-              key={employee.id}
-              value={employee.id}
-            >
-              {employee.full_name} ({employee.employment_type})
-            </option>
-          ))}
-        </select>
-
-        <input
-          type="date"
-          value={workDate}
-          onChange={(e) => setWorkDate(e.target.value)}
-          style={{ padding: 10 }}
-        />
-
-        <input
-          type="time"
-          value={startTime}
-          onChange={(e) => setStartTime(e.target.value)}
-          style={{ padding: 10 }}
-        />
-
-        <input
-          type="time"
-          value={endTime}
-          onChange={(e) => setEndTime(e.target.value)}
-          style={{ padding: 10 }}
-        />
-
-        <button
-          onClick={createSchedule}
-          style={{
-            background: "#1f6b45",
-            color: "white",
-            border: "none",
-            borderRadius: 6,
-            cursor: "pointer",
-          }}
-        >
-          Thêm ca
-        </button>
+        </form>
       </div>
-
-      <h2>Danh sách ca làm</h2>
-
-      <table
-        style={{
-          width: "100%",
-          borderCollapse: "collapse",
-        }}
-      >
-        <thead>
-          <tr>
-            <th style={thStyle}>Nhân viên</th>
-            <th style={thStyle}>Loại</th>
-            <th style={thStyle}>Ngày</th>
-            <th style={thStyle}>Bắt đầu</th>
-            <th style={thStyle}>Kết thúc</th>
-            <th style={thStyle}>Thao tác</th>
-          </tr>
-        </thead>
-
-        <tbody>
-          {schedules.map((schedule) => (
-            <tr key={schedule.id}>
-              <td style={tdStyle}>
-                {schedule.employees?.full_name}
-              </td>
-
-              <td style={tdStyle}>
-                {schedule.employees?.employment_type}
-              </td>
-
-              <td style={tdStyle}>
-                {schedule.work_date}
-              </td>
-
-              <td style={tdStyle}>
-                {schedule.start_time}
-              </td>
-
-              <td style={tdStyle}>
-                {schedule.end_time}
-              </td>
-
-              <td style={tdStyle}>
-                <button
-                  onClick={() =>
-                    deleteSchedule(schedule.id)
-                  }
-                  style={{
-                    background: "#c0392b",
-                    color: "white",
-                    border: "none",
-                    padding: "8px 12px",
-                    borderRadius: 5,
-                    cursor: "pointer",
-                  }}
-                >
-                  Xóa
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </main>
   );
 }
-
-const thStyle = {
-  border: "1px solid #ddd",
-  padding: 12,
-  textAlign: "left" as const,
-  background: "#f3f3f3",
-};
-
-const tdStyle = {
-  border: "1px solid #ddd",
-  padding: 12,
-};
