@@ -1,186 +1,173 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
 
 type Employee = {
   id: string;
   full_name: string;
   role: string;
   employment_type: string;
-};
-
-type Attendance = {
-  id: string;
-  employee_id: string;
-  work_date: string;
-  check_in: string | null;
-  check_out: string | null;
-  late_minutes: number | null;
-  makeup_minutes: number | null;
-  status: string | null;
+  salary: number;
 };
 
 export default function EmployeePage() {
   const router = useRouter();
 
-  const [employee, setEmployee] = useState<Employee | null>(null);
-  const [attendance, setAttendance] = useState<Attendance | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [checking, setChecking] = useState(false);
-  const [message, setMessage] = useState("");
+  const [employee, setEmployee] =
+    useState<Employee | null>(null);
 
-  function getToday() {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, "0");
-    const day = String(now.getDate()).padStart(2, "0");
+  const [todaySchedule, setTodaySchedule] =
+    useState<any[]>([]);
 
-    return `${year}-${month}-${day}`;
-  }
+  const [attendance, setAttendance] =
+    useState<any>(null);
 
-  function formatTime(value: string | null) {
-    if (!value) return "--:--";
+  const [notifications, setNotifications] =
+    useState<any[]>([]);
 
-    return new Date(value).toLocaleTimeString("vi-VN", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  }
+  const [reports, setReports] =
+    useState<any[]>([]);
 
-  function formatDate() {
-    return new Date().toLocaleDateString("vi-VN", {
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
-  }
+  const [leaveReason, setLeaveReason] =
+    useState("");
+
+  const [leaveStart, setLeaveStart] =
+    useState("");
+
+  const [leaveEnd, setLeaveEnd] =
+    useState("");
+
+  const [reportContent, setReportContent] =
+    useState("");
 
   useEffect(() => {
-    loadEmployee();
+    loadData();
   }, []);
 
-  async function loadEmployee() {
-    try {
-      setLoading(true);
+  async function loadData() {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+    if (!user) {
+      router.push("/login");
+      return;
+    }
 
-      if (!user) {
-        router.replace("/login");
-        return;
-      }
-
-      let employeeData: Employee | null = null;
-
-      const resultByAuthId = await supabase
+    const { data: employeeData } =
+      await supabase
         .from("employees")
-        .select("id, full_name, role, employment_type")
-        .eq("auth_user_id", user.id)
-        .maybeSingle();
+        .select("*")
+        .eq("id", user.id)
+        .single();
 
-      employeeData = resultByAuthId.data;
+    if (!employeeData) {
+      alert("Không tìm thấy thông tin nhân viên.");
+      await supabase.auth.signOut();
+      router.push("/login");
+      return;
+    }
 
-      // Nếu chưa liên kết auth_user_id thì tìm bằng email
-      if (!employeeData && user.email) {
-        const resultByEmail = await supabase
-          .from("employees")
-          .select("id, full_name, role, employment_type")
-          .eq("email", user.email)
-          .maybeSingle();
+    if (employeeData.role === "admin") {
+      router.push("/admin");
+      return;
+    }
 
-        employeeData = resultByEmail.data;
-      }
+    setEmployee(employeeData);
 
-      if (!employeeData) {
-        await supabase.auth.signOut();
-        router.replace("/login");
-        return;
-      }
+    const today = new Date()
+      .toISOString()
+      .split("T")[0];
 
-      setEmployee(employeeData);
+    const { data: scheduleData } =
+      await supabase
+        .from("schedules")
+        .select("*")
+        .eq("employee_id", user.id)
+        .eq("work_date", today);
 
-      const today = getToday();
+    setTodaySchedule(scheduleData || []);
 
-      const { data: attendanceData } = await supabase
+    const { data: attendanceData } =
+      await supabase
         .from("attendance")
         .select("*")
-        .eq("employee_id", employeeData.id)
+        .eq("employee_id", user.id)
         .eq("work_date", today)
         .maybeSingle();
 
-      setAttendance(attendanceData);
-    } catch (error) {
-      console.error(error);
-      setMessage("Không thể tải thông tin nhân viên.");
-    } finally {
-      setLoading(false);
-    }
+    setAttendance(attendanceData);
+
+    const { data: notificationData } =
+      await supabase
+        .from("notifications")
+        .select("*")
+        .order("created_at", {
+          ascending: false,
+        })
+        .limit(5);
+
+    setNotifications(notificationData || []);
+
+    const { data: reportData } =
+      await supabase
+        .from("task_reports")
+        .select("*")
+        .eq("employee_id", user.id)
+        .order("created_at", {
+          ascending: false,
+        })
+        .limit(5);
+
+    setReports(reportData || []);
   }
 
-  async function handleCheckIn() {
+  async function checkIn() {
     if (!employee) return;
 
-    try {
-      setChecking(true);
-      setMessage("");
+    const today = new Date()
+      .toISOString()
+      .split("T")[0];
 
-      if (attendance?.check_in) {
-        setMessage("Bạn đã check-in hôm nay rồi.");
-        return;
-      }
+    if (attendance?.check_in) {
+      alert("Bạn đã check-in hôm nay.");
+      return;
+    }
 
-      const { data, error } = await supabase
+    const { data, error } =
+      await supabase
         .from("attendance")
         .insert({
           employee_id: employee.id,
-          work_date: getToday(),
+          work_date: today,
           check_in: new Date().toISOString(),
           status: "working",
-          late_minutes: 0,
-          makeup_minutes: 0,
         })
         .select()
         .single();
 
-      if (error) {
-        console.error(error);
-        setMessage(`Check-in thất bại: ${error.message}`);
-        return;
-      }
-
-      setAttendance(data);
-      setMessage("Check-in thành công.");
-    } catch (error) {
-      console.error(error);
-      setMessage("Có lỗi xảy ra khi check-in.");
-    } finally {
-      setChecking(false);
+    if (error) {
+      alert(error.message);
+      return;
     }
+
+    setAttendance(data);
+
+    alert("Check-in thành công.");
   }
 
-  async function handleCheckOut() {
-    if (!employee || !attendance) return;
+  async function checkOut() {
+    if (!employee) return;
 
-    try {
-      setChecking(true);
-      setMessage("");
+    if (!attendance?.id) {
+      alert("Bạn chưa check-in.");
+      return;
+    }
 
-      if (!attendance.check_in) {
-        setMessage("Bạn chưa check-in.");
-        return;
-      }
-
-      if (attendance.check_out) {
-        setMessage("Bạn đã check-out hôm nay rồi.");
-        return;
-      }
-
-      const { data, error } = await supabase
+    const { data, error } =
+      await supabase
         .from("attendance")
         .update({
           check_out: new Date().toISOString(),
@@ -190,381 +177,276 @@ export default function EmployeePage() {
         .select()
         .single();
 
-      if (error) {
-        console.error(error);
-        setMessage(`Check-out thất bại: ${error.message}`);
-        return;
-      }
-
-      setAttendance(data);
-      setMessage("Check-out thành công.");
-    } catch (error) {
-      console.error(error);
-      setMessage("Có lỗi xảy ra khi check-out.");
-    } finally {
-      setChecking(false);
+    if (error) {
+      alert(error.message);
+      return;
     }
+
+    setAttendance(data);
+
+    alert("Check-out thành công.");
   }
 
-  async function handleLogout() {
+  async function submitLeave() {
+    if (!employee) return;
+
+    if (!leaveStart || !leaveEnd || !leaveReason) {
+      alert("Vui lòng nhập đầy đủ thông tin.");
+      return;
+    }
+
+    const { error } =
+      await supabase
+        .from("leave_requests")
+        .insert({
+          employee_id: employee.id,
+          request_type: "leave",
+          start_date: leaveStart,
+          end_date: leaveEnd,
+          reason: leaveReason,
+          status: "pending",
+        });
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    alert("Đã gửi đơn.");
+
+    setLeaveReason("");
+    setLeaveStart("");
+    setLeaveEnd("");
+  }
+
+  async function submitReport() {
+    if (!employee) return;
+
+    if (!reportContent) {
+      alert("Vui lòng nhập nội dung báo cáo.");
+      return;
+    }
+
+    const { error } =
+      await supabase
+        .from("task_reports")
+        .insert({
+          employee_id: employee.id,
+          content: reportContent,
+        });
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    alert("Đã gửi báo cáo.");
+
+    setReportContent("");
+
+    loadData();
+  }
+
+  async function logout() {
     await supabase.auth.signOut();
-
-    localStorage.removeItem("employee_id");
-    localStorage.removeItem("employee_name");
-    localStorage.removeItem("employee_role");
-    localStorage.removeItem("employment_type");
-
-    router.replace("/login");
+    router.push("/login");
   }
 
-  if (loading) {
+  if (!employee) {
     return (
-      <main
-        style={{
-          minHeight: "100vh",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontFamily: "Arial, sans-serif",
-          background: "#f5f6f4",
-        }}
-      >
+      <div className="loading">
         Đang tải...
-      </main>
+      </div>
     );
   }
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        background: "#f5f6f4",
-        fontFamily: "Arial, sans-serif",
-        color: "#222",
-      }}
-    >
-      <header
-        style={{
-          background: "#ffffff",
-          padding: "18px 24px",
-          borderBottom: "1px solid #e5e5e5",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <div>
-          <div
-            style={{
-              fontWeight: 700,
-              fontSize: "20px",
-              color: "#315f47",
-            }}
-          >
-            SOBA STAFF
-          </div>
+    <main className="employee-page">
 
-          <div
-            style={{
-              fontSize: "13px",
-              color: "#777",
-              marginTop: "4px",
-            }}
-          >
-            Giao diện nhân viên
-          </div>
+      <header className="topbar">
+
+        <div>
+          <h1>SOBA STAFF</h1>
+
+          <p>Giao diện nhân viên</p>
         </div>
 
-        <button
-          onClick={handleLogout}
-          style={{
-            border: "1px solid #ddd",
-            background: "#fff",
-            padding: "10px 16px",
-            borderRadius: "10px",
-            cursor: "pointer",
-          }}
-        >
+        <button onClick={logout}>
           Đăng xuất
         </button>
+
       </header>
 
-      <div
-        style={{
-          maxWidth: "700px",
-          margin: "0 auto",
-          padding: "30px 20px",
-        }}
-      >
-        {/* THÔNG TIN NHÂN VIÊN */}
-        <section
-          style={{
-            background: "#315f47",
-            color: "#fff",
-            borderRadius: "20px",
-            padding: "28px",
-            marginBottom: "20px",
-          }}
-        >
-          <div
-            style={{
-              fontSize: "14px",
-              opacity: 0.8,
-            }}
-          >
-            Xin chào
+      <section className="hero">
+
+        <p>Xin chào</p>
+
+        <h2>{employee.full_name}</h2>
+
+        <span>
+          Nhân viên{" "}
+          {employee.employment_type === "full_time"
+            ? "Full-time"
+            : "Part-time"}
+        </span>
+
+      </section>
+
+      <section className="card">
+
+        <h2>Chấm công hôm nay</h2>
+
+        <div className="attendance-grid">
+
+          <div>
+            <p>Check-in</p>
+
+            <strong>
+              {attendance?.check_in
+                ? new Date(
+                    attendance.check_in
+                  ).toLocaleTimeString("vi-VN")
+                : "--:--"}
+            </strong>
           </div>
 
-          <h1
-            style={{
-              margin: "8px 0",
-              fontSize: "28px",
-            }}
-          >
-            {employee?.full_name}
-          </h1>
+          <div>
+            <p>Check-out</p>
 
-          <div
-            style={{
-              fontSize: "14px",
-              opacity: 0.85,
-            }}
-          >
-            {employee?.employment_type === "full_time"
-              ? "Nhân viên Full-time"
-              : "Nhân viên Part-time"}
-          </div>
-        </section>
-
-        {/* NGÀY HÔM NAY */}
-        <section
-          style={{
-            background: "#fff",
-            borderRadius: "20px",
-            padding: "24px",
-            marginBottom: "20px",
-            boxShadow: "0 4px 20px rgba(0,0,0,0.04)",
-          }}
-        >
-          <div
-            style={{
-              color: "#777",
-              fontSize: "14px",
-            }}
-          >
-            Hôm nay
+            <strong>
+              {attendance?.check_out
+                ? new Date(
+                    attendance.check_out
+                  ).toLocaleTimeString("vi-VN")
+                : "--:--"}
+            </strong>
           </div>
 
-          <h2
-            style={{
-              margin: "8px 0 0",
-              fontSize: "20px",
-              textTransform: "capitalize",
-            }}
-          >
-            {formatDate()}
-          </h2>
-        </section>
+        </div>
 
-        {/* CHẤM CÔNG */}
-        <section
-          style={{
-            background: "#fff",
-            borderRadius: "20px",
-            padding: "24px",
-            marginBottom: "20px",
-            boxShadow: "0 4px 20px rgba(0,0,0,0.04)",
-          }}
-        >
-          <h2
-            style={{
-              marginTop: 0,
-              fontSize: "20px",
-            }}
-          >
-            Chấm công hôm nay
-          </h2>
+        <div className="button-grid">
 
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: "14px",
-              marginTop: "20px",
-            }}
-          >
+          <button onClick={checkIn}>
+            CHECK-IN
+          </button>
+
+          <button onClick={checkOut}>
+            CHECK-OUT
+          </button>
+
+        </div>
+
+      </section>
+
+      <section className="card">
+
+        <h2>Lịch làm hôm nay</h2>
+
+        {todaySchedule.length === 0 ? (
+          <p>Hôm nay chưa có lịch làm.</p>
+        ) : (
+          todaySchedule.map((schedule) => (
             <div
-              style={{
-                background: "#f5f7f5",
-                padding: "18px",
-                borderRadius: "14px",
-              }}
+              className="schedule-item"
+              key={schedule.id}
             >
-              <div
-                style={{
-                  fontSize: "13px",
-                  color: "#777",
-                  marginBottom: "8px",
-                }}
-              >
-                Check-in
-              </div>
-
-              <div
-                style={{
-                  fontSize: "26px",
-                  fontWeight: 700,
-                }}
-              >
-                {formatTime(attendance?.check_in ?? null)}
-              </div>
-            </div>
-
-            <div
-              style={{
-                background: "#f5f7f5",
-                padding: "18px",
-                borderRadius: "14px",
-              }}
-            >
-              <div
-                style={{
-                  fontSize: "13px",
-                  color: "#777",
-                  marginBottom: "8px",
-                }}
-              >
-                Check-out
-              </div>
-
-              <div
-                style={{
-                  fontSize: "26px",
-                  fontWeight: 700,
-                }}
-              >
-                {formatTime(attendance?.check_out ?? null)}
-              </div>
-            </div>
-          </div>
-
-          {message && (
-            <div
-              style={{
-                marginTop: "18px",
-                padding: "14px",
-                borderRadius: "12px",
-                background: "#eef5ef",
-                color: "#315f47",
-                fontSize: "14px",
-              }}
-            >
-              {message}
-            </div>
-          )}
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: "14px",
-              marginTop: "20px",
-            }}
-          >
-            <button
-              onClick={handleCheckIn}
-              disabled={checking || Boolean(attendance?.check_in)}
-              style={{
-                border: "none",
-                background: attendance?.check_in ? "#aab7ae" : "#315f47",
-                color: "#fff",
-                padding: "16px",
-                borderRadius: "12px",
-                fontSize: "16px",
-                fontWeight: 600,
-                cursor: attendance?.check_in ? "default" : "pointer",
-              }}
-            >
-              {checking ? "Đang xử lý..." : "CHECK-IN"}
-            </button>
-
-            <button
-              onClick={handleCheckOut}
-              disabled={
-                checking ||
-                !attendance?.check_in ||
-                Boolean(attendance?.check_out)
-              }
-              style={{
-                border: "none",
-                background:
-                  !attendance?.check_in || attendance?.check_out
-                    ? "#aab7ae"
-                    : "#d47b52",
-                color: "#fff",
-                padding: "16px",
-                borderRadius: "12px",
-                fontSize: "16px",
-                fontWeight: 600,
-                cursor:
-                  !attendance?.check_in || attendance?.check_out
-                    ? "default"
-                    : "pointer",
-              }}
-            >
-              {checking ? "Đang xử lý..." : "CHECK-OUT"}
-            </button>
-          </div>
-        </section>
-
-        {/* THÔNG TIN CA */}
-        <section
-          style={{
-            background: "#fff",
-            borderRadius: "20px",
-            padding: "24px",
-            boxShadow: "0 4px 20px rgba(0,0,0,0.04)",
-          }}
-        >
-          <h2
-            style={{
-              marginTop: 0,
-              fontSize: "20px",
-            }}
-          >
-            Thông tin làm việc
-          </h2>
-
-          <div
-            style={{
-              lineHeight: 1.8,
-              color: "#666",
-              fontSize: "14px",
-            }}
-          >
-            <p>
-              Loại nhân viên:{" "}
               <strong>
-                {employee?.employment_type === "full_time"
-                  ? "Full-time"
-                  : "Part-time"}
+                {schedule.start_time} -{" "}
+                {schedule.end_time}
               </strong>
-            </p>
 
-            {employee?.employment_type === "part_time" && (
-              <p>
-                Tổng giờ làm sẽ được tính theo block 15 phút.
-              </p>
-            )}
+              <p>{schedule.note}</p>
+            </div>
+          ))
+        )}
 
-            {employee?.employment_type === "full_time" && (
-              <p>
-                Ca làm việc linh hoạt, tổng thời lượng theo lịch được phân công.
-              </p>
-            )}
+      </section>
+
+      <section className="card">
+
+        <h2>Gửi đơn xin nghỉ</h2>
+
+        <input
+          type="date"
+          value={leaveStart}
+          onChange={(e) =>
+            setLeaveStart(e.target.value)
+          }
+        />
+
+        <input
+          type="date"
+          value={leaveEnd}
+          onChange={(e) =>
+            setLeaveEnd(e.target.value)
+          }
+        />
+
+        <textarea
+          placeholder="Lý do xin nghỉ"
+          value={leaveReason}
+          onChange={(e) =>
+            setLeaveReason(e.target.value)
+          }
+        />
+
+        <button onClick={submitLeave}>
+          Gửi đơn
+        </button>
+
+      </section>
+
+      <section className="card">
+
+        <h2>Báo cáo công việc</h2>
+
+        <textarea
+          placeholder="Hôm nay bạn đã làm những công việc gì?"
+          value={reportContent}
+          onChange={(e) =>
+            setReportContent(e.target.value)
+          }
+        />
+
+        <button onClick={submitReport}>
+          Gửi báo cáo
+        </button>
+
+      </section>
+
+      <section className="card">
+
+        <h2>Thông báo</h2>
+
+        {notifications.map((item) => (
+          <div
+            className="notification-item"
+            key={item.id}
+          >
+            <strong>{item.title}</strong>
+
+            <p>{item.content}</p>
           </div>
-        </section>
-      </div>
+        ))}
+
+      </section>
+
+      <section className="card">
+
+        <h2>Thông tin lương</h2>
+
+        <p>
+          Lương cơ bản:{" "}
+          <strong>
+            {Number(
+              employee.salary || 0
+            ).toLocaleString("vi-VN")}{" "}
+            VNĐ
+          </strong>
+        </p>
+
+      </section>
+
     </main>
   );
 }
