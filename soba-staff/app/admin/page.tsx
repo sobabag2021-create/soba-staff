@@ -1,384 +1,96 @@
-
 "use client";
 
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { supabase } from "../../lib/supabase";
 
-export default function AdminPage() {
-  const router = useRouter();
-
-  return (
-    <button
-      onClick={() => router.push("/admin/requests")}
-    >
-      Đơn từ
-    </button>
-  );
-}
 type Employee = {
   id: string;
   full_name: string;
   role: string;
   active: boolean;
-  employment_type: "full_time" | "part_time" | string | null;
+  employment_type?: string | null;
 };
-
-type Schedule = {
-  id: string;
-  employee_id: string;
-  work_date: string;
-  start_time: string | null;
-  end_time: string | null;
-  notes: string | null;
-};
-
-type PageType =
-  | "dashboard"
-  | "employees"
-  | "schedule"
-  | "requests"
-  | "attendance"
-  | "reports";
-
-const START_OPTIONS = [
-  "05:00",
-  "05:30",
-  "06:00",
-  "06:30",
-  "07:00",
-  "07:30",
-  "08:00",
-  "08:30",
-  "09:00",
-  "09:30",
-  "10:00",
-  "10:30",
-  "11:00",
-];
-
-function formatDate(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
-}
-
-function getMonday(date: Date) {
-  const result = new Date(date);
-  const day = result.getDay();
-
-  const diff = day === 0 ? -6 : 1 - day;
-
-  result.setDate(result.getDate() + diff);
-  result.setHours(0, 0, 0, 0);
-
-  return result;
-}
-
-function addDays(date: Date, days: number) {
-  const result = new Date(date);
-  result.setDate(result.getDate() + days);
-  return result;
-}
-
-function addTenHours(time: string) {
-  const [hour, minute] = time.split(":").map(Number);
-
-  let newHour = hour + 10;
-
-  if (newHour >= 24) {
-    newHour -= 24;
-  }
-
-  return `${String(newHour).padStart(2, "0")}:${String(
-    minute
-  ).padStart(2, "0")}`;
-}
-
-function formatDayHeader(date: Date) {
-  const days = [
-    "Chủ nhật",
-    "Thứ Hai",
-    "Thứ Ba",
-    "Thứ Tư",
-    "Thứ Năm",
-    "Thứ Sáu",
-    "Thứ Bảy",
-  ];
-
-  return {
-    dayName: days[date.getDay()],
-    date: `${String(date.getDate()).padStart(2, "0")}/${String(
-      date.getMonth() + 1
-    ).padStart(2, "0")}`,
-  };
-}
 
 export default function AdminPage() {
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
-  const [admin, setAdmin] = useState<Employee | null>(null);
-
-  const [activePage, setActivePage] =
-    useState<PageType>("dashboard");
-
-  const [employees, setEmployees] = useState<Employee[]>([]);
-  const [schedules, setSchedules] = useState<Schedule[]>([]);
-
-  const [weekStart, setWeekStart] = useState(() =>
-    getMonday(new Date())
-  );
-
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
-
-  const weekDays = useMemo(() => {
-    return Array.from({ length: 7 }, (_, index) =>
-      addDays(weekStart, index)
-    );
-  }, [weekStart]);
+  const [employee, setEmployee] = useState<Employee | null>(null);
+  const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
-    loadAdmin();
-  }, []);
+    async function loadUser() {
+      try {
+        const {
+          data: { user },
+          error: userError,
+        } = await supabase.auth.getUser();
 
-  useEffect(() => {
-    if (!loading && activePage === "schedule") {
-      loadEmployees();
-      loadSchedules();
-    }
-  }, [activePage, weekStart, loading]);
+        // Chưa đăng nhập
+        if (userError || !user) {
+          router.replace("/login");
+          return;
+        }
 
-  async function loadAdmin() {
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+        // Lấy thông tin tài khoản trong bảng employees
+        const { data: employeeData, error: employeeError } = await supabase
+          .from("employees")
+          .select("*")
+          .eq("auth_user_id", user.id)
+          .single();
 
-      if (!user) {
-        router.replace("/login");
-        return;
+        // Không tìm thấy nhân viên
+        if (employeeError || !employeeData) {
+          await supabase.auth.signOut();
+          router.replace("/login");
+          return;
+        }
+
+        // Tài khoản bị khóa
+        if (employeeData.active === false) {
+          await supabase.auth.signOut();
+
+          setErrorMessage("Tài khoản của bạn đã bị khóa.");
+          setLoading(false);
+
+          return;
+        }
+
+        // Nếu là nhân viên thì chuyển sang giao diện nhân viên
+        if (employeeData.role === "employee") {
+          router.replace("/employee");
+          return;
+        }
+
+        // Không phải admin
+        if (employeeData.role !== "admin") {
+          await supabase.auth.signOut();
+          router.replace("/login");
+          return;
+        }
+
+        // Admin hợp lệ
+        setEmployee(employeeData);
+        setLoading(false);
+      } catch (error) {
+        console.error("Lỗi tải tài khoản:", error);
+
+        setErrorMessage("Có lỗi xảy ra. Vui lòng đăng nhập lại.");
+        setLoading(false);
       }
-
-      const { data, error } = await supabase
-        .from("employees")
-        .select("*")
-        .eq("auth_user_id", user.id)
-        .single();
-
-      if (error || !data) {
-        await supabase.auth.signOut();
-        router.replace("/login");
-        return;
-      }
-
-      if (data.active === false) {
-        await supabase.auth.signOut();
-        router.replace("/login");
-        return;
-      }
-
-      if (data.role !== "admin") {
-        router.replace("/employee");
-        return;
-      }
-
-      setAdmin(data);
-    } catch (error) {
-      console.error(error);
-      router.replace("/login");
-    } finally {
-      setLoading(false);
     }
-  }
 
-  async function loadEmployees() {
-    const { data, error } = await supabase
-      .from("employees")
-      .select("*")
-      .eq("active", true)
-      .order("full_name", { ascending: true });
-
-    if (!error && data) {
-      setEmployees(
-        data.filter((item) => item.role !== "admin")
-      );
-    }
-  }
-
-  async function loadSchedules() {
-    const startDate = formatDate(weekDays[0]);
-    const endDate = formatDate(weekDays[6]);
-
-    const { data, error } = await supabase
-      .from("schedules")
-      .select("*")
-      .gte("work_date", startDate)
-      .lte("work_date", endDate)
-      .order("work_date", { ascending: true });
-
-    if (!error && data) {
-      setSchedules(data);
-    }
-  }
+    loadUser();
+  }, [router]);
 
   async function handleLogout() {
-    await supabase.auth.signOut();
-    router.replace("/login");
-  }
-
-  function getSchedule(
-    employeeId: string,
-    date: Date
-  ) {
-    const workDate = formatDate(date);
-
-    return schedules.find(
-      (schedule) =>
-        schedule.employee_id === employeeId &&
-        schedule.work_date === workDate
-    );
-  }
-
-  async function saveFullTimeSchedule(
-    employeeId: string,
-    date: Date,
-    startTime: string
-  ) {
-    if (!startTime) {
-      return;
+    try {
+      await supabase.auth.signOut();
+      router.replace("/login");
+    } catch (error) {
+      console.error("Lỗi đăng xuất:", error);
     }
-
-    setSaving(true);
-    setMessage("");
-
-    const workDate = formatDate(date);
-    const endTime = addTenHours(startTime);
-
-    const existing = getSchedule(employeeId, date);
-
-    let error;
-
-    if (existing) {
-      const result = await supabase
-        .from("schedules")
-        .update({
-          start_time: startTime,
-          end_time: endTime,
-        })
-        .eq("id", existing.id);
-
-      error = result.error;
-    } else {
-      const result = await supabase
-        .from("schedules")
-        .insert({
-          employee_id: employeeId,
-          work_date: workDate,
-          start_time: startTime,
-          end_time: endTime,
-        });
-
-      error = result.error;
-    }
-
-    if (error) {
-      alert(error.message);
-    } else {
-      await loadSchedules();
-    }
-
-    setSaving(false);
-  }
-
-  async function savePartTimeSchedule(
-    employeeId: string,
-    date: Date,
-    startTime: string,
-    endTime: string
-  ) {
-    if (!startTime || !endTime) {
-      alert("Vui lòng chọn giờ bắt đầu và giờ kết thúc.");
-      return;
-    }
-
-    setSaving(true);
-
-    const workDate = formatDate(date);
-    const existing = getSchedule(employeeId, date);
-
-    let error;
-
-    if (existing) {
-      const result = await supabase
-        .from("schedules")
-        .update({
-          start_time: startTime,
-          end_time: endTime,
-        })
-        .eq("id", existing.id);
-
-      error = result.error;
-    } else {
-      const result = await supabase
-        .from("schedules")
-        .insert({
-          employee_id: employeeId,
-          work_date: workDate,
-          start_time: startTime,
-          end_time: endTime,
-        });
-
-      error = result.error;
-    }
-
-    if (error) {
-      alert(error.message);
-    } else {
-      await loadSchedules();
-    }
-
-    setSaving(false);
-  }
-
-  async function deleteSchedule(
-    scheduleId: string
-  ) {
-    const confirmed = confirm(
-      "Bạn có chắc muốn xóa ca làm này?"
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    const { error } = await supabase
-      .from("schedules")
-      .delete()
-      .eq("id", scheduleId);
-
-    if (error) {
-      alert(error.message);
-    } else {
-      await loadSchedules();
-    }
-  }
-
-  function goPreviousWeek() {
-    setWeekStart((previous) =>
-      addDays(previous, -7)
-    );
-  }
-
-  function goNextWeek() {
-    setWeekStart((previous) =>
-      addDays(previous, 7)
-    );
-  }
-
-  function goCurrentWeek() {
-    setWeekStart(getMonday(new Date()));
   }
 
   if (loading) {
@@ -389,49 +101,103 @@ export default function AdminPage() {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          fontFamily: "Arial, sans-serif",
           background: "#f5f5f3",
+          fontFamily: "Arial, sans-serif",
         }}
       >
-        Đang tải...
+        <div
+          style={{
+            background: "#ffffff",
+            padding: "30px 40px",
+            borderRadius: "16px",
+            boxShadow: "0 10px 30px rgba(0,0,0,0.08)",
+            color: "#365d4b",
+            fontWeight: 600,
+          }}
+        >
+          Đang tải...
+        </div>
       </main>
     );
   }
 
-  const menuStyle = (page: PageType) => ({
-    width: "100%",
-    textAlign: "left" as const,
-    border: "none",
-    padding: "14px 16px",
-    marginBottom: "6px",
-    borderRadius: "8px",
-    cursor: "pointer",
-    fontWeight: 600,
-    fontSize: "15px",
-    background:
-      activePage === page
-        ? "#45695a"
-        : "transparent",
-    color: "#ffffff",
-  });
+  if (errorMessage) {
+    return (
+      <main
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "#f5f5f3",
+          fontFamily: "Arial, sans-serif",
+        }}
+      >
+        <div
+          style={{
+            background: "#ffffff",
+            padding: "30px",
+            borderRadius: "16px",
+            textAlign: "center",
+            boxShadow: "0 10px 30px rgba(0,0,0,0.08)",
+          }}
+        >
+          <h2>{errorMessage}</h2>
 
-  const buttonStyle = {
-    border: "none",
-    background: "#365d4b",
-    color: "#ffffff",
-    padding: "10px 16px",
-    borderRadius: "8px",
-    cursor: "pointer",
-    fontWeight: 600,
-  };
+          <button
+            onClick={() => router.replace("/login")}
+            style={{
+              marginTop: "16px",
+              border: "none",
+              background: "#365d4b",
+              color: "#ffffff",
+              padding: "12px 24px",
+              borderRadius: "8px",
+              cursor: "pointer",
+              fontWeight: 600,
+            }}
+          >
+            Về trang đăng nhập
+          </button>
+        </div>
+      </main>
+    );
+  }
+
+  const menuItems = [
+    {
+      label: "Dashboard",
+      path: "/admin",
+    },
+    {
+      label: "Nhân viên",
+      path: "/admin/employees",
+    },
+    {
+      label: "Lịch làm",
+      path: "/admin/schedule",
+    },
+    {
+      label: "Đơn từ",
+      path: "/admin/requests",
+    },
+    {
+      label: "Chấm công",
+      path: "/admin/attendance",
+    },
+    {
+      label: "Báo cáo",
+      path: "/admin/reports",
+    },
+  ];
 
   return (
     <main
       style={{
         minHeight: "100vh",
         display: "flex",
-        fontFamily: "Arial, sans-serif",
         background: "#f5f5f3",
+        fontFamily: "Arial, sans-serif",
         color: "#263238",
       }}
     >
@@ -440,18 +206,22 @@ export default function AdminPage() {
         style={{
           width: "220px",
           minHeight: "100vh",
-          background: "#10261f",
+          background: "#0f2920",
           color: "#ffffff",
-          padding: "28px 18px",
+          padding: "30px 18px",
           boxSizing: "border-box",
+          position: "fixed",
+          left: 0,
+          top: 0,
         }}
       >
         <div
           style={{
             fontSize: "30px",
             fontWeight: 700,
-            lineHeight: 1.1,
-            marginBottom: "45px",
+            lineHeight: 1.15,
+            marginBottom: "50px",
+            letterSpacing: "1px",
           }}
         >
           SOBA
@@ -459,670 +229,236 @@ export default function AdminPage() {
           STAFF
         </div>
 
-        <button
-          onClick={() =>
-            setActivePage("dashboard")
-          }
-          style={menuStyle("dashboard")}
-        >
-          Dashboard
-        </button>
-
-        <button
-          onClick={() =>
-            setActivePage("employees")
-          }
-          style={menuStyle("employees")}
-        >
-          Nhân viên
-        </button>
-
-        <button
-          onClick={() =>
-            setActivePage("schedule")
-          }
-          style={menuStyle("schedule")}
-        >
-          Lịch làm
-        </button>
-
-        <button
-          onClick={() =>
-            setActivePage("requests")
-          }
-          style={menuStyle("requests")}
-        >
-          Đơn từ
-        </button>
-
-        <button
-          onClick={() =>
-            setActivePage("attendance")
-          }
-          style={menuStyle("attendance")}
-        >
-          Chấm công
-        </button>
-
-        <button
-          onClick={() =>
-            setActivePage("reports")
-          }
-          style={menuStyle("reports")}
-        >
-          Báo cáo
-        </button>
-
-        <button
-          onClick={handleLogout}
+        <nav
           style={{
-            ...menuStyle("dashboard"),
-            marginTop: "25px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "10px",
           }}
         >
-          Đăng xuất
-        </button>
+          {menuItems.map((item) => (
+            <button
+              key={item.path}
+              onClick={() => router.push(item.path)}
+              style={{
+                border: "none",
+                background:
+                  item.path === "/admin" ? "#3e6255" : "transparent",
+                color: "#ffffff",
+                padding: "14px 16px",
+                borderRadius: "9px",
+                cursor: "pointer",
+                textAlign: "left",
+                fontSize: "15px",
+                fontWeight: 600,
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+
+          <button
+            onClick={handleLogout}
+            style={{
+              border: "none",
+              background: "transparent",
+              color: "#ffffff",
+              padding: "14px 16px",
+              borderRadius: "9px",
+              cursor: "pointer",
+              textAlign: "left",
+              fontSize: "15px",
+              fontWeight: 600,
+              marginTop: "10px",
+            }}
+          >
+            Đăng xuất
+          </button>
+        </nav>
       </aside>
 
-      {/* CONTENT */}
+      {/* NỘI DUNG */}
       <section
         style={{
-          flex: 1,
+          marginLeft: "220px",
+          width: "calc(100% - 220px)",
+          minHeight: "100vh",
           padding: "40px",
-          overflowX: "auto",
+          boxSizing: "border-box",
         }}
       >
-        {/* DASHBOARD */}
-        {activePage === "dashboard" && (
-          <>
-            <h1>Dashboard</h1>
-
-            <div
-              style={{
-                background: "#365d4b",
-                color: "#ffffff",
-                padding: "30px",
-                borderRadius: "20px",
-                maxWidth: "900px",
-              }}
-            >
-              <p>Xin chào Admin</p>
-
-              <h2>
-                {admin?.full_name ||
-                  "Quản trị viên"}
-              </h2>
-
-              <p>
-                Quản lý nhân viên và hoạt động
-                của cửa hàng
-              </p>
-            </div>
-          </>
-        )}
-
-        {/* EMPLOYEES */}
-        {activePage === "employees" && (
-          <>
-            <h1>Nhân viên</h1>
-
-            <div
-              style={{
-                background: "#ffffff",
-                borderRadius: "16px",
-                padding: "20px",
-              }}
-            >
-              {employees.length === 0 ? (
-                <p>Chưa có nhân viên.</p>
-              ) : (
-                employees.map((employee) => (
-                  <div
-                    key={employee.id}
-                    style={{
-                      padding: "15px 0",
-                      borderBottom:
-                        "1px solid #eeeeee",
-                    }}
-                  >
-                    <strong>
-                      {employee.full_name}
-                    </strong>
-
-                    <div
-                      style={{
-                        marginTop: "5px",
-                        color: "#666",
-                      }}
-                    >
-                      {employee.employment_type ===
-                      "part_time"
-                        ? "Part-time"
-                        : "Full-time"}
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </>
-        )}
-
-        {/* SCHEDULE */}
-        {activePage === "schedule" && (
-          <>
+        <header
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: "30px",
+          }}
+        >
+          <div>
             <h1
               style={{
-                marginTop: 0,
+                margin: 0,
+                fontSize: "34px",
+                color: "#263238",
               }}
             >
-              Xếp lịch làm
+              Trang quản trị
             </h1>
 
-            {/* WEEK CONTROL */}
-            <div
+            <p
               style={{
-                display: "flex",
-                gap: "10px",
-                alignItems: "center",
-                marginBottom: "25px",
-                flexWrap: "wrap",
+                margin: "8px 0 0",
+                color: "#777",
               }}
             >
-              <button
-                onClick={goPreviousWeek}
-                style={buttonStyle}
-              >
-                ← Tuần trước
-              </button>
+              Quản lý nhân viên và hoạt động cửa hàng
+            </p>
+          </div>
 
-              <button
-                onClick={goCurrentWeek}
-                style={buttonStyle}
-              >
-                Tuần hiện tại
-              </button>
+          <button
+            onClick={handleLogout}
+            style={{
+              border: "none",
+              background: "#365d4b",
+              color: "#ffffff",
+              padding: "13px 24px",
+              borderRadius: "10px",
+              cursor: "pointer",
+              fontWeight: 600,
+            }}
+          >
+            Đăng xuất
+          </button>
+        </header>
 
-              <button
-                onClick={goNextWeek}
-                style={buttonStyle}
-              >
-                Tuần sau →
-              </button>
+        {/* CHÀO ADMIN */}
+        <div
+          style={{
+            background: "#365d4b",
+            color: "#ffffff",
+            padding: "32px",
+            borderRadius: "22px",
+            marginBottom: "30px",
+          }}
+        >
+          <p
+            style={{
+              margin: 0,
+              opacity: 0.8,
+              fontSize: "16px",
+            }}
+          >
+            Xin chào Admin
+          </p>
 
-              <strong
-                style={{
-                  marginLeft: "10px",
-                }}
-              >
-                {formatDate(weekDays[0])} đến{" "}
-                {formatDate(weekDays[6])}
-              </strong>
+          <h2
+            style={{
+              margin: "10px 0",
+              fontSize: "32px",
+            }}
+          >
+            {employee?.full_name || "Quản trị viên"}
+          </h2>
+
+          <p
+            style={{
+              margin: 0,
+              opacity: 0.85,
+            }}
+          >
+            Quản lý nhân viên, lịch làm, chấm công và đơn từ
+          </p>
+        </div>
+
+        {/* MENU CHỨC NĂNG */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+            gap: "20px",
+          }}
+        >
+          <button
+            onClick={() => router.push("/admin/employees")}
+            style={cardStyle}
+          >
+            <div style={cardTitleStyle}>Nhân viên</div>
+
+            <div style={cardTextStyle}>
+              Quản lý thông tin và tài khoản nhân viên
             </div>
+          </button>
 
-            {message && (
-              <p>{message}</p>
-            )}
+          <button
+            onClick={() => router.push("/admin/schedule")}
+            style={cardStyle}
+          >
+            <div style={cardTitleStyle}>Lịch làm</div>
 
-            {/* WEEK TABLE */}
-            <div
-              style={{
-                background: "#ffffff",
-                borderRadius: "16px",
-                overflow: "auto",
-                boxShadow:
-                  "0 4px 15px rgba(0,0,0,0.05)",
-              }}
-            >
-              <table
-                style={{
-                  width: "100%",
-                  minWidth: "1300px",
-                  borderCollapse: "collapse",
-                }}
-              >
-                <thead>
-                  <tr>
-                    <th
-                      style={{
-                        minWidth: "180px",
-                        padding: "18px",
-                        borderBottom:
-                          "1px solid #dddddd",
-                        textAlign: "left",
-                        background: "#fff7e7",
-                      }}
-                    >
-                      Nhân viên
-                    </th>
-
-                    {weekDays.map((date) => {
-                      const info =
-                        formatDayHeader(date);
-
-                      return (
-                        <th
-                          key={formatDate(date)}
-                          style={{
-                            minWidth: "150px",
-                            padding: "15px",
-                            borderLeft:
-                              "1px solid #eeeeee",
-                            borderBottom:
-                              "1px solid #dddddd",
-                            background: "#fff7e7",
-                            textAlign: "center",
-                          }}
-                        >
-                          <div>
-                            {info.dayName}
-                          </div>
-
-                          <div
-                            style={{
-                              marginTop: "6px",
-                              fontWeight: 400,
-                            }}
-                          >
-                            {info.date}
-                          </div>
-                        </th>
-                      );
-                    })}
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {employees.map((employee) => (
-                    <tr
-                      key={employee.id}
-                    >
-                      {/* EMPLOYEE NAME */}
-                      <td
-                        style={{
-                          padding: "15px",
-                          borderBottom:
-                            "1px solid #eeeeee",
-                          fontWeight: 600,
-                        }}
-                      >
-                        <div>
-                          {employee.full_name}
-                        </div>
-
-                        <div
-                          style={{
-                            fontSize: "12px",
-                            marginTop: "5px",
-                            color: "#777",
-                          }}
-                        >
-                          {employee.employment_type ===
-                          "part_time"
-                            ? "Part-time"
-                            : "Full-time"}
-                        </div>
-                      </td>
-
-                      {/* EACH DAY */}
-                      {weekDays.map((date) => {
-                        const schedule =
-                          getSchedule(
-                            employee.id,
-                            date
-                          );
-
-                        const isPartTime =
-                          employee.employment_type ===
-                          "part_time";
-
-                        return (
-                          <td
-                            key={`${employee.id}-${formatDate(
-                              date
-                            )}`}
-                            style={{
-                              padding: "10px",
-                              borderLeft:
-                                "1px solid #eeeeee",
-                              borderBottom:
-                                "1px solid #eeeeee",
-                              verticalAlign: "top",
-                            }}
-                          >
-                            {/* PART TIME */}
-                            {isPartTime ? (
-                              <PartTimeCell
-                                existingSchedule={
-                                  schedule
-                                }
-                                onSave={(
-                                  startTime,
-                                  endTime
-                                ) =>
-                                  savePartTimeSchedule(
-                                    employee.id,
-                                    date,
-                                    startTime,
-                                    endTime
-                                  )
-                                }
-                                onDelete={() => {
-                                  if (schedule) {
-                                    deleteSchedule(
-                                      schedule.id
-                                    );
-                                  }
-                                }}
-                                saving={saving}
-                              />
-                            ) : (
-                              /* FULL TIME */
-                              <FullTimeCell
-                                existingSchedule={
-                                  schedule
-                                }
-                                onSave={(
-                                  startTime
-                                ) =>
-                                  saveFullTimeSchedule(
-                                    employee.id,
-                                    date,
-                                    startTime
-                                  )
-                                }
-                                onDelete={() => {
-                                  if (schedule) {
-                                    deleteSchedule(
-                                      schedule.id
-                                    );
-                                  }
-                                }}
-                                saving={saving}
-                              />
-                            )}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div style={cardTextStyle}>
+              Xếp lịch làm việc theo tuần cho nhân viên
             </div>
-          </>
-        )}
+          </button>
 
-        {/* REQUESTS */}
-        {activePage === "requests" && (
-          <>
-            <h1>Đơn từ</h1>
+          <button
+            onClick={() => router.push("/admin/requests")}
+            style={cardStyle}
+          >
+            <div style={cardTitleStyle}>Đơn từ</div>
 
-            <div
-              style={{
-                background: "#ffffff",
-                padding: "30px",
-                borderRadius: "16px",
-              }}
-            >
-              Chức năng quản lý và duyệt đơn
-              nhân viên.
+            <div style={cardTextStyle}>
+              Duyệt đơn xin nghỉ, đi muộn, về sớm và tăng ca
             </div>
-          </>
-        )}
+          </button>
 
-        {/* ATTENDANCE */}
-        {activePage === "attendance" && (
-          <>
-            <h1>Chấm công</h1>
+          <button
+            onClick={() => router.push("/admin/attendance")}
+            style={cardStyle}
+          >
+            <div style={cardTitleStyle}>Chấm công</div>
 
-            <div
-              style={{
-                background: "#ffffff",
-                padding: "30px",
-                borderRadius: "16px",
-              }}
-            >
-              Theo dõi check-in và check-out
-              của nhân viên.
+            <div style={cardTextStyle}>
+              Theo dõi thời gian check-in và check-out
             </div>
-          </>
-        )}
+          </button>
 
-        {/* REPORT */}
-        {activePage === "reports" && (
-          <>
-            <h1>Báo cáo</h1>
+          <button
+            onClick={() => router.push("/admin/reports")}
+            style={cardStyle}
+          >
+            <div style={cardTitleStyle}>Báo cáo</div>
 
-            <div
-              style={{
-                background: "#ffffff",
-                padding: "30px",
-                borderRadius: "16px",
-              }}
-            >
-              Báo cáo hoạt động nhân viên.
+            <div style={cardTextStyle}>
+              Xem tổng hợp chấm công và hoạt động nhân viên
             </div>
-          </>
-        )}
+          </button>
+        </div>
       </section>
     </main>
   );
 }
 
-/* =========================
-   FULL TIME CELL
-========================= */
+const cardStyle = {
+  background: "#ffffff",
+  border: "none",
+  padding: "30px",
+  borderRadius: "18px",
+  textAlign: "left" as const,
+  cursor: "pointer",
+  boxShadow: "0 4px 18px rgba(0,0,0,0.06)",
+  minHeight: "150px",
+};
 
-function FullTimeCell({
-  existingSchedule,
-  onSave,
-  onDelete,
-  saving,
-}: {
-  existingSchedule?: Schedule;
-  onSave: (startTime: string) => void;
-  onDelete: () => void;
-  saving: boolean;
-}) {
-  const [startTime, setStartTime] =
-    useState(
-      existingSchedule?.start_time?.slice(
-        0,
-        5
-      ) || ""
-    );
+const cardTitleStyle = {
+  fontSize: "22px",
+  fontWeight: 700,
+  color: "#263238",
+  marginBottom: "12px",
+};
 
-  useEffect(() => {
-    setStartTime(
-      existingSchedule?.start_time?.slice(
-        0,
-        5
-      ) || ""
-    );
-  }, [existingSchedule]);
-
-  return (
-    <div>
-      <select
-        value={startTime}
-        onChange={(event) => {
-          const value = event.target.value;
-          setStartTime(value);
-
-          if (value) {
-            onSave(value);
-          }
-        }}
-        disabled={saving}
-        style={{
-          width: "100%",
-          padding: "8px",
-          borderRadius: "6px",
-          border: "1px solid #cccccc",
-          background: "#ffffff",
-        }}
-      >
-        <option value="">
-          Chọn ca
-        </option>
-
-        {START_OPTIONS.map((time) => (
-          <option
-            key={time}
-            value={time}
-          >
-            {time} - {addTenHours(time)}
-          </option>
-        ))}
-      </select>
-
-      {existingSchedule && (
-        <button
-          onClick={onDelete}
-          style={{
-            marginTop: "8px",
-            border: "none",
-            background: "transparent",
-            color: "#b00020",
-            cursor: "pointer",
-            fontSize: "12px",
-          }}
-        >
-          Xóa ca
-        </button>
-      )}
-    </div>
-  );
-}
-
-/* =========================
-   PART TIME CELL
-========================= */
-
-function PartTimeCell({
-  existingSchedule,
-  onSave,
-  onDelete,
-  saving,
-}: {
-  existingSchedule?: Schedule;
-  onSave: (
-    startTime: string,
-    endTime: string
-  ) => void;
-  onDelete: () => void;
-  saving: boolean;
-}) {
-  const [startTime, setStartTime] =
-    useState(
-      existingSchedule?.start_time?.slice(
-        0,
-        5
-      ) || ""
-    );
-
-  const [endTime, setEndTime] =
-    useState(
-      existingSchedule?.end_time?.slice(
-        0,
-        5
-      ) || ""
-    );
-
-  useEffect(() => {
-    setStartTime(
-      existingSchedule?.start_time?.slice(
-        0,
-        5
-      ) || ""
-    );
-
-    setEndTime(
-      existingSchedule?.end_time?.slice(
-        0,
-        5
-      ) || ""
-    );
-  }, [existingSchedule]);
-
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: "6px",
-      }}
-    >
-      <input
-        type="time"
-        value={startTime}
-        onChange={(event) =>
-          setStartTime(event.target.value)
-        }
-        style={{
-          width: "100%",
-          boxSizing: "border-box",
-          padding: "7px",
-          borderRadius: "6px",
-          border: "1px solid #cccccc",
-        }}
-      />
-
-      <input
-        type="time"
-        value={endTime}
-        onChange={(event) =>
-          setEndTime(event.target.value)
-        }
-        style={{
-          width: "100%",
-          boxSizing: "border-box",
-          padding: "7px",
-          borderRadius: "6px",
-          border: "1px solid #cccccc",
-        }}
-      />
-
-      <button
-        onClick={() =>
-          onSave(startTime, endTime)
-        }
-        disabled={
-          saving ||
-          !startTime ||
-          !endTime
-        }
-        style={{
-          border: "none",
-          background: "#365d4b",
-          color: "#ffffff",
-          padding: "7px",
-          borderRadius: "6px",
-          cursor: "pointer",
-          fontSize: "12px",
-        }}
-      >
-        Lưu
-      </button>
-
-      {existingSchedule && (
-        <button
-          onClick={onDelete}
-          style={{
-            border: "none",
-            background: "transparent",
-            color: "#b00020",
-            cursor: "pointer",
-            fontSize: "12px",
-          }}
-        >
-          Xóa
-        </button>
-      )}
-    </div>
-  );
-}
-<button
-  onClick={() => router.push("/admin/requests")}
->
-  Đơn từ
-</button>
+const cardTextStyle = {
+  fontSize: "15px",
+  color: "#777",
+  lineHeight: 1.6,
+};
