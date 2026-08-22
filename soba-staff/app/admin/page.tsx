@@ -1,9 +1,19 @@
+
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from '../../lib/supabase';
 
+export default function AdminPage() {
+  const router = useRouter();
+
+  return (
+    <button
+      onClick={() => router.push("/admin/requests")}
+    >
+      Đơn từ
+    </button>
+  );
+}
 type Employee = {
   id: string;
   full_name: string;
