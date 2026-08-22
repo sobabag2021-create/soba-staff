@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { supabase } from "../lib/supabase";
 
 type Employee = {
   id: string;
   full_name: string;
-  employment_type: "full_time" | "part_time";
   role: string;
+  employment_type: string | null;
 };
 
 type Schedule = {
@@ -16,291 +16,396 @@ type Schedule = {
   work_date: string;
   start_time: string;
   end_time: string;
-  employees?: {
+  employees: {
     full_name: string;
-    employment_type: string;
+    employment_type: string | null;
+  } | null;
+};
+
+type Attendance = {
+  id: string;
+  employee_id: string;
+  work_date: string;
+  check_in: string | null;
+  check_out: string | null;
+  late_minutes: number | null;
+  penalty_amount: number | null;
+  status: string | null;
+  employees: {
+    full_name: string;
+  } | null;
+};
+
+type RequestItem = {
+  id: string;
+  employee_id: string;
+  request_type: string;
+  request_date: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  reason: string | null;
+  status: string;
+  admin_note: string | null;
+  employees: {
+    full_name: string;
   } | null;
 };
 
 function getVietnamDate() {
-  const now = new Date();
-  const vn = new Intl.DateTimeFormat("en-CA", {
+  return new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Ho_Chi_Minh",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(now);
-
-  return vn;
+  }).format(new Date());
 }
 
-function formatDateVN(dateString: string) {
-  if (!dateString) return "";
+function formatTime(value: string | null) {
+  if (!value) return "--:--";
 
-  const [year, month, day] = dateString.split("-").map(Number);
-  const date = new Date(year, month - 1, day);
+  return value.slice(0, 5);
+}
 
+function formatDate(date: string) {
   return new Intl.DateTimeFormat("vi-VN", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(new Date(`${date}T00:00:00`));
+}
+
+function getDayName(date: string) {
+  return new Intl.DateTimeFormat("vi-VN", {
+    timeZone: "Asia/Ho_Chi_Minh",
     weekday: "long",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  }).format(date);
+  }).format(new Date(`${date}T00:00:00`));
 }
 
-function formatShortDate(dateString: string) {
-  const [year, month, day] = dateString.split("-").map(Number);
-  const date = new Date(year, month - 1, day);
+function formatMoney(value: number | null) {
+  return `${Number(value || 0).toLocaleString("vi-VN")}đ`;
+}
+
+function formatDateTime(value: string | null) {
+  if (!value) return "--:--";
 
   return new Intl.DateTimeFormat("vi-VN", {
-    weekday: "short",
-    day: "2-digit",
-    month: "2-digit",
-  }).format(date);
+    timeZone: "Asia/Ho_Chi_Minh",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(value));
 }
 
-function formatTime(time: string) {
-  if (!time) return "";
-  return time.slice(0, 5);
-}
-
-function addHours(time: string, hours: number) {
-  if (!time) return "";
-
-  const [hour, minute] = time.split(":").map(Number);
-
-  const totalMinutes = hour * 60 + minute + hours * 60;
-
-  const newHour = Math.floor((totalMinutes % 1440) / 60)
-    .toString()
-    .padStart(2, "0");
-
-  const newMinute = (totalMinutes % 60)
-    .toString()
-    .padStart(2, "0");
-
-  return `${newHour}:${newMinute}`;
-}
-
-function getMonthOptions() {
-  const result = [];
-  const today = new Date();
-
-  for (let i = -1; i <= 11; i++) {
-    const date = new Date(
-      today.getFullYear(),
-      today.getMonth() + i,
-      1
-    );
-
-    result.push({
-      value: `${date.getFullYear()}-${String(
-        date.getMonth() + 1
-      ).padStart(2, "0")}`,
-      label: `Tháng ${date.getMonth() + 1}/${date.getFullYear()}`,
-    });
-  }
-
-  return result;
-}
-
-export default function HomePage() {
-  const today = getVietnamDate();
-
-  const currentMonth = today.slice(0, 7);
-
-  const [activeTab, setActiveTab] = useState<
-    "today" | "schedule" | "approval"
-  >("schedule");
+export default function Home() {
+  const [currentEmployee, setCurrentEmployee] =
+    useState<Employee | null>(null);
 
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
+  const [attendanceList, setAttendanceList] = useState<Attendance[]>([]);
+  const [requests, setRequests] = useState<RequestItem[]>([]);
 
-  const [selectedMonth, setSelectedMonth] =
-    useState(currentMonth);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
-  const [workDate, setWorkDate] = useState(today);
+  const [activeTab, setActiveTab] = useState<
+    "today" | "schedule" | "requests"
+  >("today");
 
-  const [selectedEmployeeId, setSelectedEmployeeId] =
-    useState("");
+  const today = getVietnamDate();
 
+  const [selectedDate, setSelectedDate] = useState(today);
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
   const [startTime, setStartTime] = useState("08:00");
+  const [endTime, setEndTime] = useState("17:00");
 
-  const [endTime, setEndTime] = useState("18:00");
-
-  const [loading, setLoading] = useState(false);
-  const [pageLoading, setPageLoading] = useState(true);
-
-  const monthOptions = useMemo(() => {
-    return getMonthOptions();
-  }, []);
-
-  const selectedEmployee = employees.find(
-    (employee) => employee.id === selectedEmployeeId
-  );
-
-  const isFullTime =
-    selectedEmployee?.employment_type === "full_time";
-
-  const calculatedEndTime = isFullTime
-    ? addHours(startTime, 10)
-    : endTime;
-
-  useEffect(() => {
-    loadEmployees();
-  }, []);
-
-  useEffect(() => {
-    loadSchedules();
-  }, [selectedMonth]);
-
-  async function loadEmployees() {
-    setPageLoading(true);
-
-    const { data, error } = await supabase
-      .from("employees")
-      .select("id, full_name, employment_type, role")
-      .eq("active", true)
-      .order("full_name");
-
-    if (error) {
-      alert("Không tải được danh sách nhân viên: " + error.message);
-      setPageLoading(false);
-      return;
-    }
-
-    setEmployees(data || []);
-    setPageLoading(false);
-  }
-
-  async function loadSchedules() {
-    const startOfMonth = `${selectedMonth}-01`;
-
-    const [year, month] = selectedMonth.split("-").map(Number);
-
-    const nextMonthDate = new Date(year, month, 1);
-
-    const nextMonth = `${nextMonthDate.getFullYear()}-${String(
-      nextMonthDate.getMonth() + 1
-    ).padStart(2, "0")}-01`;
-
-    const { data, error } = await supabase
-      .from("work_schedules")
-      .select(`
-        id,
-        employee_id,
-        work_date,
-        start_time,
-        end_time,
-        employees (
-          full_name,
-          employment_type
-        )
-      `)
-      .gte("work_date", startOfMonth)
-      .lt("work_date", nextMonth)
-      .order("work_date")
-      .order("start_time");
-
-    if (error) {
-      console.error(error);
-      alert("Không tải được lịch làm: " + error.message);
-      return;
-    }
-
-    setSchedules((data as Schedule[]) || []);
-  }
-
-  function handleEmployeeChange(employeeId: string) {
-    setSelectedEmployeeId(employeeId);
-
-    const employee = employees.find(
-      (item) => item.id === employeeId
-    );
-
-    if (employee?.employment_type === "full_time") {
-      setEndTime(addHours(startTime, 10));
-    }
-  }
-
-  function handleStartTimeChange(value: string) {
-    setStartTime(value);
-
-    if (isFullTime) {
-      setEndTime(addHours(value, 10));
-    }
-  }
-
-  async function saveSchedule() {
-    if (!selectedEmployeeId) {
-      alert("Vui lòng chọn nhân viên");
-      return;
-    }
-
-    if (!workDate) {
-      alert("Vui lòng chọn ngày làm");
-      return;
-    }
-
-    if (!startTime) {
-      alert("Vui lòng chọn giờ bắt đầu");
-      return;
-    }
-
-    if (!calculatedEndTime) {
-      alert("Vui lòng chọn giờ kết thúc");
-      return;
-    }
-
-    if (
-      isFullTime &&
-      (startTime < "07:00" || startTime > "11:00")
-    ) {
-      alert(
-        "Nhân viên Full-time chỉ được xếp giờ bắt đầu từ 07:00 đến 11:00"
-      );
-      return;
-    }
-
-    if (
-      !isFullTime &&
-      calculatedEndTime <= startTime
-    ) {
-      alert("Giờ kết thúc phải lớn hơn giờ bắt đầu");
-      return;
-    }
-
+  async function loadData() {
     setLoading(true);
 
-    const { error } = await supabase
-      .from("work_schedules")
-      .upsert(
-        {
-          employee_id: selectedEmployeeId,
-          work_date: workDate,
-          start_time: startTime,
-          end_time: calculatedEndTime,
-        },
-        {
-          onConflict: "employee_id,work_date",
-        }
+    try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError || !user) {
+        window.location.href = "/login";
+        return;
+      }
+
+      const { data: currentEmployeeData, error: currentEmployeeError } =
+        await supabase
+          .from("employees")
+          .select(
+            `
+            id,
+            full_name,
+            role,
+            employment_type
+          `
+          )
+          .eq("auth_user_id", user.id)
+          .single();
+
+      if (currentEmployeeError || !currentEmployeeData) {
+        alert("Không tìm thấy tài khoản nhân viên.");
+        return;
+      }
+
+      const current = currentEmployeeData as Employee;
+
+      setCurrentEmployee(current);
+
+      if (current.role !== "admin") {
+        alert("Tài khoản này không có quyền quản trị.");
+        return;
+      }
+
+      const { data: employeeData, error: employeeError } =
+        await supabase
+          .from("employees")
+          .select(
+            `
+            id,
+            full_name,
+            role,
+            employment_type
+          `
+          )
+          .eq("active", true)
+          .order("full_name");
+
+      if (employeeError) {
+        console.error(employeeError);
+      }
+
+      setEmployees((employeeData || []) as Employee[]);
+
+      const { data: scheduleData, error: scheduleError } =
+        await supabase
+          .from("work_schedules")
+          .select(
+            `
+            id,
+            employee_id,
+            work_date,
+            start_time,
+            end_time,
+            employees (
+              full_name,
+              employment_type
+            )
+          `
+          )
+          .gte("work_date", today)
+          .order("work_date")
+          .order("start_time");
+
+      if (scheduleError) {
+        console.error(scheduleError);
+      }
+
+      const normalizedSchedules: Schedule[] = (scheduleData || []).map(
+        (item: any) => ({
+          id: item.id,
+          employee_id: item.employee_id,
+          work_date: item.work_date,
+          start_time: item.start_time,
+          end_time: item.end_time,
+          employees: Array.isArray(item.employees)
+            ? item.employees[0] || null
+            : item.employees || null,
+        })
       );
 
-    setLoading(false);
+      setSchedules(normalizedSchedules);
 
-    if (error) {
-      alert("Không lưu được lịch: " + error.message);
+      const { data: attendanceData, error: attendanceError } =
+        await supabase
+          .from("attendance")
+          .select(
+            `
+            id,
+            employee_id,
+            work_date,
+            check_in,
+            check_out,
+            late_minutes,
+            penalty_amount,
+            status,
+            employees (
+              full_name
+            )
+          `
+          )
+          .eq("work_date", today)
+          .order("check_in", {
+            ascending: false,
+            nullsFirst: false,
+          });
+
+      if (attendanceError) {
+        console.error(attendanceError);
+      }
+
+      const normalizedAttendance: Attendance[] = (
+        attendanceData || []
+      ).map((item: any) => ({
+        id: item.id,
+        employee_id: item.employee_id,
+        work_date: item.work_date,
+        check_in: item.check_in,
+        check_out: item.check_out,
+        late_minutes: item.late_minutes,
+        penalty_amount: item.penalty_amount,
+        status: item.status,
+        employees: Array.isArray(item.employees)
+          ? item.employees[0] || null
+          : item.employees || null,
+      }));
+
+      setAttendanceList(normalizedAttendance);
+
+      const { data: requestData, error: requestError } =
+        await supabase
+          .from("requests")
+          .select(
+            `
+            id,
+            employee_id,
+            request_type,
+            request_date,
+            start_time,
+            end_time,
+            reason,
+            status,
+            admin_note,
+            employees (
+              full_name
+            )
+          `
+          )
+          .order("created_at", {
+            ascending: false,
+          });
+
+      if (requestError) {
+        console.error(requestError);
+      }
+
+      const normalizedRequests: RequestItem[] = (
+        requestData || []
+      ).map((item: any) => ({
+        id: item.id,
+        employee_id: item.employee_id,
+        request_type: item.request_type,
+        request_date: item.request_date,
+        start_time: item.start_time,
+        end_time: item.end_time,
+        reason: item.reason,
+        status: item.status,
+        admin_note: item.admin_note,
+        employees: Array.isArray(item.employees)
+          ? item.employees[0] || null
+          : item.employees || null,
+      }));
+
+      setRequests(normalizedRequests);
+    } catch (error) {
+      console.error(error);
+      alert("Có lỗi khi tải dữ liệu.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const todaySchedules = useMemo(() => {
+    return schedules.filter(
+      (schedule) => schedule.work_date === today
+    );
+  }, [schedules, today]);
+
+  const checkedInCount = attendanceList.filter(
+    (item) => item.check_in
+  ).length;
+
+  const checkedOutCount = attendanceList.filter(
+    (item) => item.check_out
+  ).length;
+
+  const lateCount = attendanceList.filter(
+    (item) => Number(item.late_minutes || 0) > 0
+  ).length;
+
+  const scheduledEmployeeIds = new Set(
+    todaySchedules.map((item) => item.employee_id)
+  );
+
+  const notArrivedCount = Array.from(
+    scheduledEmployeeIds
+  ).filter((employeeId) => {
+    return !attendanceList.some(
+      (attendance) =>
+        attendance.employee_id === employeeId &&
+        attendance.check_in
+    );
+  }).length;
+
+  async function handleCreateSchedule() {
+    if (!selectedEmployeeId) {
+      alert("Vui lòng chọn nhân viên.");
       return;
     }
 
-    alert("Đã lưu lịch làm thành công");
+    if (!selectedDate) {
+      alert("Vui lòng chọn ngày.");
+      return;
+    }
 
-    await loadSchedules();
+    if (!startTime || !endTime) {
+      alert("Vui lòng nhập giờ bắt đầu và kết thúc.");
+      return;
+    }
 
-    setSelectedEmployeeId("");
+    if (startTime >= endTime) {
+      alert("Giờ kết thúc phải sau giờ bắt đầu.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const { error } = await supabase
+        .from("work_schedules")
+        .insert({
+          employee_id: selectedEmployeeId,
+          work_date: selectedDate,
+          start_time: startTime,
+          end_time: endTime,
+        });
+
+      if (error) {
+        console.error(error);
+        alert(`Không thể xếp lịch: ${error.message}`);
+        return;
+      }
+
+      alert("Đã xếp lịch làm việc.");
+
+      setSelectedEmployeeId("");
+
+      await loadData();
+    } catch (error) {
+      console.error(error);
+      alert("Có lỗi khi xếp lịch.");
+    } finally {
+      setSaving(false);
+    }
   }
 
-  async function deleteSchedule(scheduleId: string) {
+  async function handleDeleteSchedule(id: string) {
     const confirmDelete = window.confirm(
       "Bạn có chắc muốn xóa ca làm này?"
     );
@@ -310,371 +415,682 @@ export default function HomePage() {
     const { error } = await supabase
       .from("work_schedules")
       .delete()
-      .eq("id", scheduleId);
+      .eq("id", id);
 
     if (error) {
-      alert("Không xóa được ca làm: " + error.message);
+      alert(`Không thể xóa: ${error.message}`);
       return;
     }
 
-    await loadSchedules();
+    await loadData();
   }
 
-  const schedulesByDate = useMemo(() => {
-    const grouped: Record<string, Schedule[]> = {};
+  async function handleRequestStatus(
+    id: string,
+    status: "approved" | "rejected"
+  ) {
+    const { error } = await supabase
+      .from("requests")
+      .update({
+        status,
+      })
+      .eq("id", id);
 
-    schedules.forEach((schedule) => {
-      if (!grouped[schedule.work_date]) {
-        grouped[schedule.work_date] = [];
-      }
+    if (error) {
+      alert(`Không thể cập nhật: ${error.message}`);
+      return;
+    }
 
-      grouped[schedule.work_date].push(schedule);
-    });
+    await loadData();
+  }
 
-    return grouped;
-  }, [schedules]);
+  function requestStatusText(status: string) {
+    if (status === "approved") return "Đã duyệt";
+    if (status === "rejected") return "Không duyệt";
 
-  if (pageLoading) {
+    return "Chờ duyệt";
+  }
+
+  function requestStatusColor(status: string) {
+    if (status === "approved") return "#dcfce7";
+    if (status === "rejected") return "#fee2e2";
+
+    return "#fef3c7";
+  }
+
+  if (loading) {
     return (
-      <main className="min-h-screen bg-[#f7f7f5] flex items-center justify-center">
-        <p className="text-lg font-medium">
-          Đang tải dữ liệu...
-        </p>
+      <main style={pageStyle}>
+        <h1>SOBA STAFF</h1>
+        <p>Đang tải dữ liệu...</p>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-[#f7f7f5] text-[#1f2933]">
-      <div className="max-w-5xl mx-auto px-4 py-6 pb-28">
-        <header className="mb-8">
-          <h1 className="text-3xl md:text-4xl font-bold tracking-wide">
-            SOBA STAFF
-          </h1>
-
-          <p className="text-gray-500 mt-2">
-            Quản lý nhân viên và lịch làm việc
+    <main style={pageStyle}>
+      <div style={headerStyle}>
+        <div>
+          <h1 style={{ margin: 0 }}>SOBA STAFF</h1>
+          <p style={{ marginTop: 8, color: "#666" }}>
+            Xin chào, {currentEmployee?.full_name}
           </p>
-        </header>
-
-        <div className="flex gap-2 overflow-x-auto mb-6">
-          <button
-            onClick={() => setActiveTab("today")}
-            className={`px-5 py-3 rounded-xl font-semibold whitespace-nowrap ${
-              activeTab === "today"
-                ? "bg-[#276846] text-white"
-                : "bg-white border border-gray-200"
-            }`}
-          >
-            Hôm nay
-          </button>
-
-          <button
-            onClick={() => setActiveTab("schedule")}
-            className={`px-5 py-3 rounded-xl font-semibold whitespace-nowrap ${
-              activeTab === "schedule"
-                ? "bg-[#276846] text-white"
-                : "bg-white border border-gray-200"
-            }`}
-          >
-            Xếp lịch làm
-          </button>
-
-          <button
-            onClick={() => setActiveTab("approval")}
-            className={`px-5 py-3 rounded-xl font-semibold whitespace-nowrap ${
-              activeTab === "approval"
-                ? "bg-[#276846] text-white"
-                : "bg-white border border-gray-200"
-            }`}
-          >
-            Chờ duyệt
-          </button>
         </div>
 
-        {activeTab === "schedule" && (
-          <>
-            <section className="bg-white rounded-3xl border border-gray-200 p-5 md:p-7 shadow-sm">
-              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
-                <div>
-                  <h2 className="text-2xl font-bold">
-                    Xếp lịch làm việc
-                  </h2>
+        <button
+          onClick={async () => {
+            await supabase.auth.signOut();
+            window.location.href = "/login";
+          }}
+          style={logoutButtonStyle}
+        >
+          Đăng xuất
+        </button>
+      </div>
 
-                  <p className="text-gray-500 mt-1">
-                    Ca Full-time tự tính 10 tiếng. Part-time
-                    tự chọn giờ kết thúc.
-                  </p>
-                </div>
+      <div style={menuStyle}>
+        <button
+          onClick={() => setActiveTab("today")}
+          style={
+            activeTab === "today"
+              ? activeMenuStyle
+              : menuButtonStyle
+          }
+        >
+          Hôm nay
+        </button>
+
+        <button
+          onClick={() => setActiveTab("schedule")}
+          style={
+            activeTab === "schedule"
+              ? activeMenuStyle
+              : menuButtonStyle
+          }
+        >
+          Xếp lịch làm
+        </button>
+
+        <button
+          onClick={() => setActiveTab("requests")}
+          style={
+            activeTab === "requests"
+              ? activeMenuStyle
+              : menuButtonStyle
+          }
+        >
+          Chờ duyệt
+        </button>
+      </div>
+
+      {activeTab === "today" && (
+        <>
+          <h2 style={{ marginTop: 30 }}>
+            Hôm nay - {formatDate(today)}
+          </h2>
+
+          <div style={dashboardGrid}>
+            <div style={statCardStyle}>
+              <div style={statNumberStyle}>{checkedInCount}</div>
+              <div>🟢 Đã check-in</div>
+            </div>
+
+            <div style={statCardStyle}>
+              <div style={statNumberStyle}>{lateCount}</div>
+              <div>🔴 Đi muộn</div>
+            </div>
+
+            <div style={statCardStyle}>
+              <div style={statNumberStyle}>{notArrivedCount}</div>
+              <div>⚪ Chưa đến</div>
+            </div>
+
+            <div style={statCardStyle}>
+              <div style={statNumberStyle}>{checkedOutCount}</div>
+              <div>🔵 Đã check-out</div>
+            </div>
+          </div>
+
+          <section style={cardStyle}>
+            <h2>Chấm công hôm nay</h2>
+
+            {attendanceList.length === 0 ? (
+              <p>Chưa có nhân viên check-in hôm nay.</p>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={tableStyle}>
+                  <thead>
+                    <tr>
+                      <th style={thStyle}>Nhân viên</th>
+                      <th style={thStyle}>Check in</th>
+                      <th style={thStyle}>Đi muộn</th>
+                      <th style={thStyle}>Phạt</th>
+                      <th style={thStyle}>Check out</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {attendanceList.map((item) => (
+                      <tr key={item.id}>
+                        <td style={tdStyle}>
+                          {item.employees?.full_name ||
+                            "Chưa có tên"}
+                        </td>
+
+                        <td style={tdStyle}>
+                          {formatDateTime(item.check_in)}
+                        </td>
+
+                        <td style={tdStyle}>
+                          {Number(item.late_minutes || 0) > 0
+                            ? `${item.late_minutes} phút`
+                            : "Đúng giờ"}
+                        </td>
+
+                        <td style={tdStyle}>
+                          {formatMoney(item.penalty_amount)}
+                        </td>
+
+                        <td style={tdStyle}>
+                          {formatDateTime(item.check_out)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
+            )}
+          </section>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                <div>
-                  <label className="block font-semibold mb-2">
-                    Ngày làm
-                  </label>
+          <section style={cardStyle}>
+            <h2>Ca làm hôm nay</h2>
 
-                  <input
-                    type="date"
-                    value={workDate}
-                    onChange={(event) =>
-                      setWorkDate(event.target.value)
-                    }
-                    className="w-full border border-gray-300 rounded-xl px-4 py-3"
-                  />
+            {todaySchedules.length === 0 ? (
+              <p>Chưa xếp ca hôm nay.</p>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={tableStyle}>
+                  <thead>
+                    <tr>
+                      <th style={thStyle}>Nhân viên</th>
+                      <th style={thStyle}>Loại</th>
+                      <th style={thStyle}>Ca làm</th>
+                    </tr>
+                  </thead>
 
-                  {workDate && (
-                    <p className="mt-2 text-sm text-[#276846] font-medium">
-                      {formatDateVN(workDate)}
-                    </p>
-                  )}
-                </div>
+                  <tbody>
+                    {todaySchedules.map((schedule) => (
+                      <tr key={schedule.id}>
+                        <td style={tdStyle}>
+                          {schedule.employees?.full_name ||
+                            "Chưa có tên"}
+                        </td>
 
-                <div>
-                  <label className="block font-semibold mb-2">
-                    Nhân viên
-                  </label>
+                        <td style={tdStyle}>
+                          {schedule.employees?.employment_type ||
+                            "--"}
+                        </td>
 
-                  <select
-                    value={selectedEmployeeId}
-                    onChange={(event) =>
-                      handleEmployeeChange(event.target.value)
-                    }
-                    className="w-full border border-gray-300 rounded-xl px-4 py-3 bg-white"
-                  >
-                    <option value="">
-                      -- Chọn nhân viên --
-                    </option>
+                        <td style={tdStyle}>
+                          {formatTime(schedule.start_time)} -{" "}
+                          {formatTime(schedule.end_time)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </>
+      )}
 
-                    {employees
-                      .filter(
-                        (employee) =>
-                          employee.role !== "admin"
-                      )
-                      .map((employee) => (
-                        <option
-                          key={employee.id}
-                          value={employee.id}
-                        >
-                          {employee.full_name} —{" "}
-                          {employee.employment_type ===
-                          "full_time"
-                            ? "Full-time"
-                            : "Part-time"}
-                        </option>
-                      ))}
-                  </select>
-                </div>
+      {activeTab === "schedule" && (
+        <>
+          <h2 style={{ marginTop: 30 }}>
+            Xếp lịch làm việc
+          </h2>
 
-                {selectedEmployee && (
-                  <div className="md:col-span-2">
-                    <div
-                      className={`rounded-2xl px-5 py-4 ${
-                        isFullTime
-                          ? "bg-green-50 border border-green-200"
-                          : "bg-blue-50 border border-blue-200"
-                      }`}
-                    >
-                      <p className="font-bold">
-                        {selectedEmployee.full_name}
-                      </p>
+          <section style={cardStyle}>
+            <div style={formGridStyle}>
+              <div>
+                <label style={labelStyle}>Ngày</label>
 
-                      <p className="text-sm mt-1">
-                        {isFullTime
-                          ? "Full-time: ca chuẩn 10 tiếng, giờ bắt đầu từ 07:00 đến 11:00."
-                          : "Part-time: giờ bắt đầu và kết thúc linh hoạt."}
-                      </p>
-                    </div>
-                  </div>
+                <input
+                  type="date"
+                  value={selectedDate}
+                  onChange={(event) =>
+                    setSelectedDate(event.target.value)
+                  }
+                  style={inputStyle}
+                />
+
+                {selectedDate && (
+                  <p style={{ color: "#666", marginBottom: 0 }}>
+                    {getDayName(selectedDate)}
+                  </p>
                 )}
-
-                <div>
-                  <label className="block font-semibold mb-2">
-                    Giờ bắt đầu
-                  </label>
-
-                  <input
-                    type="time"
-                    value={startTime}
-                    min={isFullTime ? "07:00" : undefined}
-                    max={isFullTime ? "11:00" : undefined}
-                    step="900"
-                    onChange={(event) =>
-                      handleStartTimeChange(event.target.value)
-                    }
-                    className="w-full border border-gray-300 rounded-xl px-4 py-3"
-                  />
-
-                  {isFullTime && (
-                    <p className="text-sm text-gray-500 mt-2">
-                      Full-time: chọn từ 07:00 đến 11:00
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block font-semibold mb-2">
-                    Giờ kết thúc
-                  </label>
-
-                  <input
-                    type="time"
-                    value={calculatedEndTime}
-                    step="900"
-                    disabled={isFullTime}
-                    onChange={(event) =>
-                      setEndTime(event.target.value)
-                    }
-                    className={`w-full border border-gray-300 rounded-xl px-4 py-3 ${
-                      isFullTime
-                        ? "bg-gray-100 text-gray-500"
-                        : ""
-                    }`}
-                  />
-
-                  {isFullTime && (
-                    <p className="text-sm text-[#276846] font-medium mt-2">
-                      Tự động = giờ bắt đầu + 10 tiếng
-                    </p>
-                  )}
-                </div>
               </div>
 
-              <button
-                onClick={saveSchedule}
-                disabled={loading}
-                className="mt-7 w-full bg-[#276846] hover:bg-[#1f5638] disabled:opacity-60 text-white font-bold py-4 rounded-xl transition"
-              >
-                {loading
-                  ? "ĐANG LƯU..."
-                  : "LƯU LỊCH LÀM"}
-              </button>
-            </section>
-
-            <section className="mt-7 bg-white rounded-3xl border border-gray-200 p-5 md:p-7 shadow-sm">
-              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
-                <div>
-                  <h2 className="text-2xl font-bold">
-                    Lịch đã xếp
-                  </h2>
-
-                  <p className="text-gray-500 mt-1">
-                    Xem lịch làm việc theo tháng
-                  </p>
-                </div>
+              <div>
+                <label style={labelStyle}>Nhân viên</label>
 
                 <select
-                  value={selectedMonth}
+                  value={selectedEmployeeId}
                   onChange={(event) =>
-                    setSelectedMonth(event.target.value)
+                    setSelectedEmployeeId(event.target.value)
                   }
-                  className="border border-gray-300 rounded-xl px-4 py-3 bg-white"
+                  style={inputStyle}
                 >
-                  {monthOptions.map((month) => (
-                    <option
-                      key={month.value}
-                      value={month.value}
-                    >
-                      {month.label}
-                    </option>
-                  ))}
+                  <option value="">
+                    -- Chọn nhân viên --
+                  </option>
+
+                  {employees
+                    .filter(
+                      (employee) =>
+                        employee.role !== "admin"
+                    )
+                    .map((employee) => (
+                      <option
+                        key={employee.id}
+                        value={employee.id}
+                      >
+                        {employee.full_name} -{" "}
+                        {employee.employment_type ===
+                        "part_time"
+                          ? "Part time"
+                          : "Full time"}
+                      </option>
+                    ))}
                 </select>
               </div>
 
-              {Object.keys(schedulesByDate).length === 0 ? (
-                <div className="text-center py-12 text-gray-500">
-                  Chưa có lịch làm trong tháng này.
-                </div>
-              ) : (
-                <div className="space-y-6">
-                  {Object.entries(schedulesByDate).map(
-                    ([date, daySchedules]) => (
-                      <div key={date}>
-                        <div className="mb-3">
-                          <h3 className="font-bold text-lg">
-                            {formatShortDate(date)}
-                          </h3>
-                        </div>
+              <div>
+                <label style={labelStyle}>
+                  Giờ bắt đầu
+                </label>
 
-                        <div className="space-y-3">
-                          {daySchedules.map((schedule) => (
-                            <div
-                              key={schedule.id}
-                              className="border border-gray-200 rounded-2xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4"
-                            >
-                              <div>
-                                <p className="font-bold text-lg">
-                                  {
-                                    schedule.employees
-                                      ?.full_name
-                                  }
-                                </p>
+                <input
+                  type="time"
+                  value={startTime}
+                  onChange={(event) =>
+                    setStartTime(event.target.value)
+                  }
+                  style={inputStyle}
+                />
+              </div>
 
-                                <p className="text-sm text-gray-500 mt-1">
-                                  {schedule.employees
-                                    ?.employment_type ===
-                                  "full_time"
-                                    ? "Full-time"
-                                    : "Part-time"}
-                                </p>
-                              </div>
+              <div>
+                <label style={labelStyle}>
+                  Giờ kết thúc
+                </label>
 
-                              <div className="font-bold text-lg">
-                                {formatTime(
-                                  schedule.start_time
-                                )}{" "}
-                                –{" "}
-                                {formatTime(
-                                  schedule.end_time
-                                )}
-                              </div>
+                <input
+                  type="time"
+                  value={endTime}
+                  onChange={(event) =>
+                    setEndTime(event.target.value)
+                  }
+                  style={inputStyle}
+                />
+              </div>
+            </div>
 
-                              <button
-                                onClick={() =>
-                                  deleteSchedule(schedule.id)
-                                }
-                                className="border border-red-200 text-red-600 px-4 py-2 rounded-xl font-semibold"
-                              >
-                                Xóa
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )
+            <button
+              onClick={handleCreateSchedule}
+              disabled={saving}
+              style={primaryButtonStyle}
+            >
+              {saving ? "Đang lưu..." : "Xếp lịch"}
+            </button>
+          </section>
+
+          <section style={cardStyle}>
+            <h2>Danh sách ca đã xếp</h2>
+
+            {schedules.length === 0 ? (
+              <p>Chưa có ca làm nào.</p>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={tableStyle}>
+                  <thead>
+                    <tr>
+                      <th style={thStyle}>Ngày</th>
+                      <th style={thStyle}>Thứ</th>
+                      <th style={thStyle}>Nhân viên</th>
+                      <th style={thStyle}>Loại</th>
+                      <th style={thStyle}>Ca làm</th>
+                      <th style={thStyle}>Xóa</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {schedules.map((schedule) => (
+                      <tr key={schedule.id}>
+                        <td style={tdStyle}>
+                          {formatDate(schedule.work_date)}
+                        </td>
+
+                        <td style={tdStyle}>
+                          {getDayName(schedule.work_date)}
+                        </td>
+
+                        <td style={tdStyle}>
+                          {schedule.employees?.full_name ||
+                            "Chưa có tên"}
+                        </td>
+
+                        <td style={tdStyle}>
+                          {schedule.employees?.employment_type ||
+                            "--"}
+                        </td>
+
+                        <td style={tdStyle}>
+                          {formatTime(schedule.start_time)} -{" "}
+                          {formatTime(schedule.end_time)}
+                        </td>
+
+                        <td style={tdStyle}>
+                          <button
+                            onClick={() =>
+                              handleDeleteSchedule(
+                                schedule.id
+                              )
+                            }
+                            style={deleteButtonStyle}
+                          >
+                            Xóa
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </>
+      )}
+
+      {activeTab === "requests" && (
+        <>
+          <h2 style={{ marginTop: 30 }}>
+            Yêu cầu nhân viên
+          </h2>
+
+          <section style={cardStyle}>
+            {requests.length === 0 ? (
+              <p>Chưa có yêu cầu nào.</p>
+            ) : (
+              requests.map((request) => (
+                <div
+                  key={request.id}
+                  style={{
+                    borderBottom: "1px solid #eee",
+                    padding: "18px 0",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 20,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <div>
+                      <h3 style={{ marginTop: 0 }}>
+                        {request.employees?.full_name ||
+                          "Nhân viên"}
+                      </h3>
+
+                      <p>
+                        <b>Loại yêu cầu:</b>{" "}
+                        {request.request_type}
+                      </p>
+
+                      {request.request_date && (
+                        <p>
+                          <b>Ngày:</b>{" "}
+                          {formatDate(request.request_date)}
+                        </p>
+                      )}
+
+                      {(request.start_time ||
+                        request.end_time) && (
+                        <p>
+                          <b>Thời gian:</b>{" "}
+                          {formatTime(request.start_time)} -{" "}
+                          {formatTime(request.end_time)}
+                        </p>
+                      )}
+
+                      {request.reason && (
+                        <p>
+                          <b>Lý do:</b> {request.reason}
+                        </p>
+                      )}
+                    </div>
+
+                    <div>
+                      <span
+                        style={{
+                          background:
+                            requestStatusColor(
+                              request.status
+                            ),
+                          padding: "8px 12px",
+                          borderRadius: 999,
+                          fontWeight: 700,
+                        }}
+                      >
+                        {requestStatusText(
+                          request.status
+                        )}
+                      </span>
+                    </div>
+                  </div>
+
+                  {request.status === "pending" && (
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 10,
+                        marginTop: 12,
+                      }}
+                    >
+                      <button
+                        onClick={() =>
+                          handleRequestStatus(
+                            request.id,
+                            "approved"
+                          )
+                        }
+                        style={approveButtonStyle}
+                      >
+                        Duyệt
+                      </button>
+
+                      <button
+                        onClick={() =>
+                          handleRequestStatus(
+                            request.id,
+                            "rejected"
+                          )
+                        }
+                        style={rejectButtonStyle}
+                      >
+                        Không duyệt
+                      </button>
+                    </div>
                   )}
                 </div>
-              )}
-            </section>
-          </>
-        )}
-
-        {activeTab === "today" && (
-          <section className="bg-white rounded-3xl border border-gray-200 p-7">
-            <h2 className="text-2xl font-bold">
-              Hôm nay
-            </h2>
-
-            <p className="text-gray-500 mt-2">
-              Phần dashboard chấm công hôm nay sẽ nối tiếp
-              với bảng attendance.
-            </p>
+              ))
+            )}
           </section>
-        )}
-
-        {activeTab === "approval" && (
-          <section className="bg-white rounded-3xl border border-gray-200 p-7">
-            <h2 className="text-2xl font-bold">
-              Yêu cầu chờ duyệt
-            </h2>
-
-            <p className="text-gray-500 mt-2">
-              Phần này sẽ kết nối bảng requests để duyệt:
-              nghỉ, về sớm và tăng ca.
-            </p>
-          </section>
-        )}
-      </div>
+        </>
+      )}
     </main>
   );
 }
+
+const pageStyle = {
+  maxWidth: "1100px",
+  margin: "0 auto",
+  padding: "30px 20px 60px",
+  fontFamily: "Arial, sans-serif",
+  color: "#1f2937",
+};
+
+const headerStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "flex-start",
+  gap: "20px",
+  flexWrap: "wrap" as const,
+};
+
+const menuStyle = {
+  display: "flex",
+  gap: "10px",
+  marginTop: "25px",
+  flexWrap: "wrap" as const,
+};
+
+const menuButtonStyle = {
+  border: "1px solid #d1d5db",
+  background: "#fff",
+  color: "#374151",
+  padding: "12px 18px",
+  borderRadius: "10px",
+  cursor: "pointer",
+  fontSize: "15px",
+  fontWeight: 600,
+};
+
+const activeMenuStyle = {
+  ...menuButtonStyle,
+  background: "#256b4a",
+  color: "#fff",
+  border: "1px solid #256b4a",
+};
+
+const logoutButtonStyle = {
+  border: "1px solid #ddd",
+  background: "#fff",
+  padding: "10px 15px",
+  borderRadius: "10px",
+  cursor: "pointer",
+};
+
+const dashboardGrid = {
+  display: "grid",
+  gridTemplateColumns:
+    "repeat(auto-fit, minmax(180px, 1fr))",
+  gap: "15px",
+  marginTop: "20px",
+};
+
+const statCardStyle = {
+  background: "#fff",
+  border: "1px solid #e5e7eb",
+  borderRadius: "16px",
+  padding: "20px",
+};
+
+const statNumberStyle = {
+  fontSize: "32px",
+  fontWeight: 700,
+  marginBottom: "8px",
+};
+
+const cardStyle = {
+  background: "#fff",
+  border: "1px solid #e5e7eb",
+  borderRadius: "18px",
+  padding: "24px",
+  marginTop: "24px",
+};
+
+const formGridStyle = {
+  display: "grid",
+  gridTemplateColumns:
+    "repeat(auto-fit, minmax(200px, 1fr))",
+  gap: "18px",
+  marginBottom: "20px",
+};
+
+const labelStyle = {
+  display: "block",
+  fontWeight: 700,
+  marginBottom: "8px",
+};
+
+const inputStyle = {
+  width: "100%",
+  boxSizing: "border-box" as const,
+  padding: "12px",
+  border: "1px solid #d1d5db",
+  borderRadius: "10px",
+  fontSize: "15px",
+};
+
+const primaryButtonStyle = {
+  width: "100%",
+  background: "#256b4a",
+  color: "#fff",
+  border: "none",
+  padding: "14px",
+  borderRadius: "10px",
+  fontSize: "16px",
+  fontWeight: 700,
+  cursor: "pointer",
+};
+
+const tableStyle = {
+  width: "100%",
+  borderCollapse: "collapse" as const,
+  minWidth: "700px",
+};
+
+const thStyle = {
+  textAlign: "left" as const,
+  padding: "12px",
+  borderBottom: "2px solid #e5e7eb",
+  background: "#f9fafb",
+};
+
+const tdStyle = {
+  padding: "12px",
+  borderBottom: "1px solid #e5e7eb",
+};
+
+const deleteButtonStyle = {
+  background: "#fee2e2",
+  color: "#b91c1c",
+  border: "none",
+  padding: "8px 12px",
+  borderRadius: "8px",
+  cursor: "pointer",
+};
+
+const approveButtonStyle = {
+  background: "#256b4a",
+  color: "#fff",
+  border: "none",
+  padding: "10px 15px",
+  borderRadius: "8px",
+  cursor: "pointer",
+  fontWeight: 700,
+};
+
+const rejectButtonStyle = {
+  background: "#fee2e2",
+  color: "#b91c1c",
+  border: "none",
+  padding: "10px 15px",
+  borderRadius: "8px",
+  cursor: "pointer",
+  fontWeight: 700,
+};
