@@ -33,6 +33,7 @@ function getMonday(date: Date) {
   const result = new Date(date);
   const day = result.getDay();
 
+  // Chủ nhật = 0, chuyển về thứ 2
   const diff = day === 0 ? -6 : 1 - day;
 
   result.setDate(result.getDate() + diff);
@@ -49,6 +50,7 @@ function addDays(date: Date, days: number) {
 
 function formatTime(time: string | null) {
   if (!time) return "";
+
   return time.slice(0, 5);
 }
 
@@ -67,11 +69,9 @@ export default function EmployeePage() {
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [errorMessage, setErrorMessage] = useState("");
 
-  // Bổ sung State quản lý trạng thái chấm công
-  const [checkInTime, setCheckInTime] = useState<string | null>(null);
-  const [checkOutTime, setCheckOutTime] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
+  // offset = 0 tuần hiện tại
+  // -1 tuần trước
+  // 1 tuần sau
   const [weekOffset, setWeekOffset] = useState(0);
 
   const weekStart = useMemo(() => {
@@ -128,20 +128,6 @@ export default function EmployeePage() {
         }
 
         setEmployee(employeeData);
-
-        // Lấy thông tin chấm công ngày hôm nay từ bảng attendance
-        const today = formatDate(new Date());
-        const { data: attendanceData } = await supabase
-          .from("attendance")
-          .select("*")
-          .eq("employee_id", employeeData.id)
-          .eq("date", today)
-          .single();
-
-        if (attendanceData) {
-          if (attendanceData.check_in) setCheckInTime(attendanceData.check_in);
-          if (attendanceData.check_out) setCheckOutTime(attendanceData.check_out);
-        }
       } catch (error) {
         console.error(error);
         setErrorMessage("Không thể tải thông tin tài khoản.");
@@ -184,60 +170,6 @@ export default function EmployeePage() {
     loadSchedules();
   }, [employee, weekStart, weekEnd]);
 
-  // Hàm xử lý Check-in
-  async function handleCheckIn() {
-    if (!employee || checkInTime || isSubmitting) return;
-
-    setIsSubmitting(true);
-    const now = new Date();
-    const today = formatDate(now);
-    const currentTime = now.toTimeString().split(" ")[0]; // "HH:MM:SS"
-
-    try {
-      const { error } = await supabase.from("attendance").upsert({
-        employee_id: employee.id,
-        date: today,
-        check_in: currentTime,
-      });
-
-      if (error) throw error;
-      setCheckInTime(currentTime);
-      alert("Check-in thành công!");
-    } catch (error) {
-      console.error(error);
-      alert("Check-in thất bại!");
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
-  // Hàm xử lý Check-out
-  async function handleCheckOut() {
-    if (!employee || !checkInTime || checkOutTime || isSubmitting) return;
-
-    setIsSubmitting(true);
-    const now = new Date();
-    const today = formatDate(now);
-    const currentTime = now.toTimeString().split(" ")[0];
-
-    try {
-      const { error } = await supabase
-        .from("attendance")
-        .update({ check_out: currentTime })
-        .eq("employee_id", employee.id)
-        .eq("date", today);
-
-      if (error) throw error;
-      setCheckOutTime(currentTime);
-      alert("Check-out thành công!");
-    } catch (error) {
-      console.error(error);
-      alert("Check-out thất bại!");
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
   async function handleLogout() {
     await supabase.auth.signOut();
     router.replace("/login");
@@ -245,6 +177,7 @@ export default function EmployeePage() {
 
   function getSchedulesForDate(date: Date) {
     const dateString = formatDate(date);
+
     return schedules.filter(
       (schedule) => schedule.work_date === dateString
     );
@@ -475,7 +408,7 @@ export default function EmployeePage() {
                   fontSize: "20px",
                 }}
               >
-                {checkInTime ? formatTime(checkInTime) : "--:--"}
+                --:--
               </strong>
             </div>
 
@@ -497,7 +430,7 @@ export default function EmployeePage() {
                   fontSize: "20px",
                 }}
               >
-                {checkOutTime ? formatTime(checkOutTime) : "--:--"}
+                --:--
               </strong>
             </div>
           </div>
@@ -510,32 +443,28 @@ export default function EmployeePage() {
             }}
           >
             <button
-              onClick={handleCheckIn}
-              disabled={!!checkInTime || isSubmitting}
               style={{
                 border: "none",
-                background: checkInTime ? "#ccc" : "#365d4b",
+                background: "#365d4b",
                 color: "#ffffff",
                 padding: "15px",
                 borderRadius: "10px",
                 fontWeight: 600,
-                cursor: checkInTime ? "not-allowed" : "pointer",
+                cursor: "pointer",
               }}
             >
               CHECK-IN
             </button>
 
             <button
-              onClick={handleCheckOut}
-              disabled={!checkInTime || !!checkOutTime || isSubmitting}
               style={{
                 border: "none",
-                background: !checkInTime || checkOutTime ? "#ccc" : "#365d4b",
+                background: "#365d4b",
                 color: "#ffffff",
                 padding: "15px",
                 borderRadius: "10px",
                 fontWeight: 600,
-                cursor: !checkInTime || checkOutTime ? "not-allowed" : "pointer",
+                cursor: "pointer",
               }}
             >
               CHECK-OUT
