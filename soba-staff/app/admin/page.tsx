@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "../lib/supabase";
+import { supabase } from "../../lib/supabase";
 
 type Employee = {
   id: string;
@@ -35,7 +35,6 @@ type Attendance = {
   employee_id: string;
   check_in: string | null;
   check_out: string | null;
-  work_date?: string;
 };
 
 type Menu =
@@ -44,28 +43,36 @@ type Menu =
   | "schedule"
   | "requests"
   | "attendance"
-  | "reports"
-  | "notifications";
+  | "reports";
 
 export default function AdminPage() {
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
-  const [employee, setEmployee] = useState<Employee | null>(null);
-  const [employees, setEmployees] = useState<Employee[]>([]);
-  const [activeMenu, setActiveMenu] = useState<Menu>("dashboard");
+  const [currentUser, setCurrentUser] = useState<Employee | null>(null);
 
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [requests, setRequests] = useState<Request[]>([]);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
 
-  const [message, setMessage] = useState("");
+  const [activeMenu, setActiveMenu] =
+    useState<Menu>("dashboard");
 
-  // Xếp lịch
-  const [selectedEmployee, setSelectedEmployee] = useState("");
-  const [workDate, setWorkDate] = useState("");
-  const [startTime, setStartTime] = useState("");
-  const [endTime, setEndTime] = useState("");
+  const [selectedEmployee, setSelectedEmployee] =
+    useState("");
+
+  const [workDate, setWorkDate] =
+    useState("");
+
+  const [startTime, setStartTime] =
+    useState("");
+
+  const [endTime, setEndTime] =
+    useState("");
+
+  const [message, setMessage] =
+    useState("");
 
   useEffect(() => {
     loadData();
@@ -75,7 +82,6 @@ export default function AdminPage() {
     try {
       setLoading(true);
 
-      // Lấy user đang đăng nhập
       const {
         data: { user },
         error: userError,
@@ -86,13 +92,14 @@ export default function AdminPage() {
         return;
       }
 
-      // Lấy thông tin tài khoản
-      const { data: employeeData, error: employeeError } =
-        await supabase
-          .from("employees")
-          .select("*")
-          .eq("auth_user_id", user.id)
-          .single();
+      const {
+        data: employeeData,
+        error: employeeError,
+      } = await supabase
+        .from("employees")
+        .select("*")
+        .eq("auth_user_id", user.id)
+        .single();
 
       if (employeeError || !employeeData) {
         await supabase.auth.signOut();
@@ -100,57 +107,75 @@ export default function AdminPage() {
         return;
       }
 
-      // Kiểm tra tài khoản bị khóa
       if (employeeData.active === false) {
         await supabase.auth.signOut();
         router.replace("/login");
         return;
       }
 
-      // Nếu không phải admin
       if (employeeData.role !== "admin") {
         router.replace("/employee");
         return;
       }
 
-      setEmployee(employeeData);
+      setCurrentUser(employeeData);
 
-      // Lấy danh sách nhân viên
-      const { data: employeesData } = await supabase
+      const {
+        data: employeesData,
+        error: employeesError,
+      } = await supabase
         .from("employees")
         .select("*")
-        .eq("active", true)
         .order("full_name");
 
-      setEmployees(employeesData || []);
+      if (!employeesError && employeesData) {
+        setEmployees(employeesData);
+      }
 
-      // Lấy lịch làm
-      const { data: schedulesData } = await supabase
+      const {
+        data: schedulesData,
+        error: schedulesError,
+      } = await supabase
         .from("schedules")
         .select("*")
-        .order("work_date", { ascending: false });
+        .order("work_date", {
+          ascending: false,
+        });
 
-      setSchedules(schedulesData || []);
+      if (!schedulesError && schedulesData) {
+        setSchedules(schedulesData);
+      }
 
-      // Lấy đơn từ
-      const { data: requestsData } = await supabase
+      const {
+        data: requestsData,
+        error: requestsError,
+      } = await supabase
         .from("requests")
         .select("*")
-        .order("created_at", { ascending: false });
+        .order("created_at", {
+          ascending: false,
+        });
 
-      setRequests(requestsData || []);
+      if (!requestsError && requestsData) {
+        setRequests(requestsData);
+      }
 
-      // Lấy chấm công
-      const { data: attendanceData } = await supabase
+      const {
+        data: attendanceData,
+        error: attendanceError,
+      } = await supabase
         .from("attendance")
         .select("*")
-        .order("check_in", { ascending: false });
+        .order("check_in", {
+          ascending: false,
+        });
 
-      setAttendance(attendanceData || []);
-
+      if (!attendanceError && attendanceData) {
+        setAttendance(attendanceData);
+      }
     } catch (error) {
       console.error(error);
-      setMessage("Có lỗi xảy ra khi tải dữ liệu.");
+      setMessage("Không thể tải dữ liệu.");
     } finally {
       setLoading(false);
     }
@@ -161,7 +186,6 @@ export default function AdminPage() {
     router.replace("/login");
   }
 
-  // Xếp lịch
   async function createSchedule() {
     if (
       !selectedEmployee ||
@@ -169,44 +193,37 @@ export default function AdminPage() {
       !startTime ||
       !endTime
     ) {
-      alert("Vui lòng nhập đầy đủ thông tin.");
+      alert("Vui lòng chọn đầy đủ thông tin.");
       return;
     }
 
-    try {
-      const { error } = await supabase
-        .from("schedules")
-        .insert([
-          {
-            employee_id: selectedEmployee,
-            work_date: workDate,
-            start_time: startTime,
-            end_time: endTime,
-          },
-        ]);
+    const { error } = await supabase
+      .from("schedules")
+      .insert([
+        {
+          employee_id: selectedEmployee,
+          work_date: workDate,
+          start_time: startTime,
+          end_time: endTime,
+        },
+      ]);
 
-      if (error) {
-        console.error(error);
-        alert(error.message);
-        return;
-      }
-
-      alert("Đã xếp lịch thành công.");
-
-      setSelectedEmployee("");
-      setWorkDate("");
-      setStartTime("");
-      setEndTime("");
-
-      loadData();
-
-    } catch (error) {
+    if (error) {
       console.error(error);
-      alert("Không thể xếp lịch.");
+      alert(error.message);
+      return;
     }
+
+    alert("Đã xếp lịch thành công.");
+
+    setSelectedEmployee("");
+    setWorkDate("");
+    setStartTime("");
+    setEndTime("");
+
+    await loadData();
   }
 
-  // Duyệt đơn
   async function updateRequestStatus(
     requestId: string,
     status: "approved" | "rejected"
@@ -223,47 +240,47 @@ export default function AdminPage() {
 
     alert(
       status === "approved"
-        ? "Đã duyệt yêu cầu."
-        : "Đã từ chối yêu cầu."
+        ? "Đã duyệt đơn."
+        : "Đã từ chối đơn."
     );
 
-    loadData();
+    await loadData();
   }
 
   function getEmployeeName(employeeId: string) {
-    const found = employees.find(
+    const employee = employees.find(
       (item) => item.id === employeeId
     );
 
-    return found?.full_name || "Không rõ";
+    return employee?.full_name || "Không rõ";
   }
 
   if (loading) {
     return (
       <main style={styles.loading}>
-        Đang tải dữ liệu...
+        Đang tải...
       </main>
     );
   }
 
   return (
     <main style={styles.app}>
-      {/* SIDEBAR */}
-
       <aside style={styles.sidebar}>
         <div style={styles.logo}>
           <div>SOBA</div>
           <div>STAFF</div>
         </div>
 
-        <nav style={styles.menu}>
+        <div style={styles.menu}>
           <button
             style={
               activeMenu === "dashboard"
                 ? styles.menuActive
-                : styles.menuItem
+                : styles.menuButton
             }
-            onClick={() => setActiveMenu("dashboard")}
+            onClick={() =>
+              setActiveMenu("dashboard")
+            }
           >
             Dashboard
           </button>
@@ -272,9 +289,11 @@ export default function AdminPage() {
             style={
               activeMenu === "employees"
                 ? styles.menuActive
-                : styles.menuItem
+                : styles.menuButton
             }
-            onClick={() => setActiveMenu("employees")}
+            onClick={() =>
+              setActiveMenu("employees")
+            }
           >
             Nhân viên
           </button>
@@ -283,9 +302,11 @@ export default function AdminPage() {
             style={
               activeMenu === "schedule"
                 ? styles.menuActive
-                : styles.menuItem
+                : styles.menuButton
             }
-            onClick={() => setActiveMenu("schedule")}
+            onClick={() =>
+              setActiveMenu("schedule")
+            }
           >
             Lịch làm
           </button>
@@ -294,9 +315,11 @@ export default function AdminPage() {
             style={
               activeMenu === "requests"
                 ? styles.menuActive
-                : styles.menuItem
+                : styles.menuButton
             }
-            onClick={() => setActiveMenu("requests")}
+            onClick={() =>
+              setActiveMenu("requests")
+            }
           >
             Đơn từ
           </button>
@@ -305,9 +328,11 @@ export default function AdminPage() {
             style={
               activeMenu === "attendance"
                 ? styles.menuActive
-                : styles.menuItem
+                : styles.menuButton
             }
-            onClick={() => setActiveMenu("attendance")}
+            onClick={() =>
+              setActiveMenu("attendance")
+            }
           >
             Chấm công
           </button>
@@ -316,78 +341,68 @@ export default function AdminPage() {
             style={
               activeMenu === "reports"
                 ? styles.menuActive
-                : styles.menuItem
+                : styles.menuButton
             }
-            onClick={() => setActiveMenu("reports")}
+            onClick={() =>
+              setActiveMenu("reports")
+            }
           >
             Báo cáo
           </button>
 
           <button
-            style={
-              activeMenu === "notifications"
-                ? styles.menuActive
-                : styles.menuItem
-            }
-            onClick={() => setActiveMenu("notifications")}
-          >
-            Thông báo
-          </button>
-
-          <button
-            style={styles.menuItem}
+            style={styles.menuButton}
             onClick={handleLogout}
           >
             Đăng xuất
           </button>
-        </nav>
+        </div>
       </aside>
 
-      {/* MAIN */}
-
       <section style={styles.content}>
-        {/* DASHBOARD */}
-
         {activeMenu === "dashboard" && (
           <>
             <div style={styles.welcome}>
               <p>Xin chào Admin</p>
 
               <h1>
-                {employee?.full_name || "Quản trị viên"}
+                {currentUser?.full_name || "Admin"}
               </h1>
 
               <span>
-                Quản lý nhân viên và hoạt động của cửa hàng
+                Quản lý nhân viên và hoạt động
+                của cửa hàng
               </span>
             </div>
 
             <div style={styles.cards}>
               <div
                 style={styles.card}
-                onClick={() => setActiveMenu("employees")}
+                onClick={() =>
+                  setActiveMenu("employees")
+                }
               >
                 <h3>Nhân viên</h3>
-
                 <strong>{employees.length}</strong>
-
-                <p>Nhân viên đang hoạt động</p>
+                <p>Nhân viên trong hệ thống</p>
               </div>
 
               <div
                 style={styles.card}
-                onClick={() => setActiveMenu("schedule")}
+                onClick={() =>
+                  setActiveMenu("schedule")
+                }
               >
                 <h3>Lịch làm</h3>
-
                 <strong>{schedules.length}</strong>
-
-                <p>Ca làm đã được tạo</p>
+                <p>Ca làm đã tạo</p>
               </div>
 
               <div
                 style={styles.card}
-                onClick={() => setActiveMenu("requests")}
+                onClick={() =>
+                  setActiveMenu("requests")
+                }
               >
                 <h3>Đơn từ</h3>
 
@@ -410,29 +425,29 @@ export default function AdminPage() {
                 }
               >
                 <h3>Chấm công</h3>
-
-                <strong>{attendance.length}</strong>
-
+                <strong>
+                  {attendance.length}
+                </strong>
                 <p>Lượt chấm công</p>
               </div>
             </div>
           </>
         )}
 
-        {/* NHÂN VIÊN */}
-
         {activeMenu === "employees" && (
           <>
             <h1>Nhân viên</h1>
 
-            <div style={styles.tableBox}>
+            <div style={styles.whiteBox}>
               {employees.map((item) => (
                 <div
                   key={item.id}
-                  style={styles.employeeRow}
+                  style={styles.row}
                 >
                   <div>
-                    <strong>{item.full_name}</strong>
+                    <strong>
+                      {item.full_name}
+                    </strong>
 
                     <p>
                       {item.employment_type ||
@@ -440,17 +455,7 @@ export default function AdminPage() {
                     </p>
                   </div>
 
-                  <span
-                    style={{
-                      color:
-                        item.role === "admin"
-                          ? "#365d4b"
-                          : "#555",
-                      fontWeight: 600,
-                    }}
-                  >
-                    {item.role}
-                  </span>
+                  <span>{item.role}</span>
 
                   <span>
                     {item.active
@@ -462,8 +467,6 @@ export default function AdminPage() {
             </div>
           </>
         )}
-
-        {/* LỊCH LÀM */}
 
         {activeMenu === "schedule" && (
           <>
@@ -484,7 +487,8 @@ export default function AdminPage() {
                 {employees
                   .filter(
                     (item) =>
-                      item.role === "employee"
+                      item.role === "employee" &&
+                      item.active
                   )
                   .map((item) => (
                     <option
@@ -524,8 +528,8 @@ export default function AdminPage() {
               />
 
               <button
-                onClick={createSchedule}
                 style={styles.primaryButton}
+                onClick={createSchedule}
               >
                 Xếp lịch
               </button>
@@ -560,13 +564,11 @@ export default function AdminPage() {
           </>
         )}
 
-        {/* ĐƠN TỪ */}
-
         {activeMenu === "requests" && (
           <>
             <h1>Đơn từ</h1>
 
-            <div style={styles.tableBox}>
+            <div style={styles.whiteBox}>
               {requests.map((item) => (
                 <div
                   key={item.id}
@@ -596,27 +598,29 @@ export default function AdminPage() {
                   </div>
 
                   {item.status === "pending" && (
-                    <div style={styles.actionButtons}>
+                    <div
+                      style={styles.actionButtons}
+                    >
                       <button
+                        style={styles.approveButton}
                         onClick={() =>
                           updateRequestStatus(
                             item.id,
                             "approved"
                           )
                         }
-                        style={styles.approveButton}
                       >
                         Duyệt
                       </button>
 
                       <button
+                        style={styles.rejectButton}
                         onClick={() =>
                           updateRequestStatus(
                             item.id,
                             "rejected"
                           )
                         }
-                        style={styles.rejectButton}
                       >
                         Từ chối
                       </button>
@@ -632,17 +636,15 @@ export default function AdminPage() {
           </>
         )}
 
-        {/* CHẤM CÔNG */}
-
         {activeMenu === "attendance" && (
           <>
             <h1>Chấm công</h1>
 
-            <div style={styles.tableBox}>
+            <div style={styles.whiteBox}>
               {attendance.map((item) => (
                 <div
                   key={item.id}
-                  style={styles.employeeRow}
+                  style={styles.row}
                 >
                   <strong>
                     {getEmployeeName(
@@ -671,13 +673,13 @@ export default function AdminPage() {
               ))}
 
               {attendance.length === 0 && (
-                <p>Chưa có dữ liệu chấm công.</p>
+                <p>
+                  Chưa có dữ liệu chấm công.
+                </p>
               )}
             </div>
           </>
         )}
-
-        {/* BÁO CÁO */}
 
         {activeMenu === "reports" && (
           <>
@@ -686,42 +688,25 @@ export default function AdminPage() {
             <div style={styles.cards}>
               <div style={styles.card}>
                 <h3>Tổng nhân viên</h3>
-
                 <strong>{employees.length}</strong>
               </div>
 
               <div style={styles.card}>
                 <h3>Tổng lịch làm</h3>
-
                 <strong>{schedules.length}</strong>
               </div>
 
               <div style={styles.card}>
                 <h3>Tổng đơn từ</h3>
-
                 <strong>{requests.length}</strong>
               </div>
 
               <div style={styles.card}>
                 <h3>Tổng chấm công</h3>
-
-                <strong>{attendance.length}</strong>
+                <strong>
+                  {attendance.length}
+                </strong>
               </div>
-            </div>
-          </>
-        )}
-
-        {/* THÔNG BÁO */}
-
-        {activeMenu === "notifications" && (
-          <>
-            <h1>Thông báo</h1>
-
-            <div style={styles.tableBox}>
-              <p>
-                Chức năng thông báo sẽ được kết nối
-                tiếp theo.
-              </p>
             </div>
           </>
         )}
@@ -777,7 +762,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: "8px",
   },
 
-  menuItem: {
+  menuButton: {
     background: "transparent",
     color: "#d5ddd9",
     border: "none",
@@ -804,7 +789,6 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1,
     padding: "40px",
     boxSizing: "border-box",
-    maxWidth: "1400px",
   },
 
   welcome: {
@@ -859,10 +843,9 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: "10px",
     cursor: "pointer",
     fontWeight: 600,
-    fontSize: "15px",
   },
 
-  tableBox: {
+  whiteBox: {
     background: "#ffffff",
     borderRadius: "18px",
     padding: "20px",
@@ -870,7 +853,7 @@ const styles: Record<string, React.CSSProperties> = {
       "0 5px 20px rgba(0,0,0,0.05)",
   },
 
-  employeeRow: {
+  row: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
