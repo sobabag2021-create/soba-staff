@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../lib/supabase";
 
@@ -10,8 +10,7 @@ type Employee = {
   full_name: string;
   role: string;
   active: boolean;
-  employment_type?: string | null;
-  email?: string | null;
+  employment_type: string | null;
 };
 
 type Schedule = {
@@ -20,495 +19,141 @@ type Schedule = {
   work_date: string;
   start_time: string | null;
   end_time: string | null;
-  note?: string | null;
 };
 
-type Tab = "dashboard" | "employees" | "schedules";
-
-type PartTimeShift = {
-  start: string;
-  end: string;
+type Request = {
+  id: string;
+  employee_id: string;
+  request_type: string | null;
+  reason: string | null;
+  status: string | null;
+  created_at: string;
 };
 
-type DaySchedule = {
-  fullTimeStart: string;
-  partTimeShifts: PartTimeShift[];
+type Attendance = {
+  id: string;
+  employee_id: string;
+  check_in: string | null;
+  check_out: string | null;
+  work_date?: string;
 };
 
-type WeeklyScheduleState = Record<string, Record<string, DaySchedule>>;
+type Menu =
+  | "dashboard"
+  | "employees"
+  | "schedule"
+  | "requests"
+  | "attendance"
+  | "reports"
+  | "notifications";
 
 export default function AdminPage() {
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
   const [employee, setEmployee] = useState<Employee | null>(null);
-  const [errorMessage, setErrorMessage] = useState("");
-
-  const [activeTab, setActiveTab] = useState<Tab>("dashboard");
-
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [activeMenu, setActiveMenu] = useState<Menu>("dashboard");
+
   const [schedules, setSchedules] = useState<Schedule[]>([]);
-  const [dataLoading, setDataLoading] = useState(false);
+  const [requests, setRequests] = useState<Request[]>([]);
+  const [attendance, setAttendance] = useState<Attendance[]>([]);
 
-  const [weekStart, setWeekStart] = useState<Date>(() => {
-    const now = new Date();
-    const day = now.getDay();
-    const diff = day === 0 ? -6 : 1 - day;
+  const [message, setMessage] = useState("");
 
-    const monday = new Date(now);
-    monday.setDate(now.getDate() + diff);
-    monday.setHours(0, 0, 0, 0);
-
-    return monday;
-  });
-
-  const [weeklySchedule, setWeeklySchedule] =
-    useState<WeeklyScheduleState>({});
+  // Xếp lịch
+  const [selectedEmployee, setSelectedEmployee] = useState("");
+  const [workDate, setWorkDate] = useState("");
+  const [startTime, setStartTime] = useState("");
+  const [endTime, setEndTime] = useState("");
 
   useEffect(() => {
-    async function loadUser() {
-      try {
-        const {
-          data: { user },
-          error: userError,
-        } = await supabase.auth.getUser();
-
-        if (userError || !user) {
-          router.replace("/login");
-          return;
-        }
-
-        const { data: employeeData, error: employeeError } =
-          await supabase
-            .from("employees")
-            .select("*")
-            .eq("auth_user_id", user.id)
-            .single();
-
-        if (employeeError || !employeeData) {
-          await supabase.auth.signOut();
-          router.replace("/login");
-          return;
-        }
-
-        if (employeeData.active === false) {
-          await supabase.auth.signOut();
-          setErrorMessage("Tài khoản của bạn đã bị khóa.");
-          setLoading(false);
-          return;
-        }
-
-        if (employeeData.role === "employee") {
-          router.replace("/employee");
-          return;
-        }
-
-        if (employeeData.role !== "admin") {
-          await supabase.auth.signOut();
-          router.replace("/login");
-          return;
-        }
-
-        setEmployee(employeeData);
-        setLoading(false);
-
-        loadEmployees();
-      } catch (error) {
-        console.error(error);
-        setErrorMessage("Có lỗi xảy ra. Vui lòng đăng nhập lại.");
-        setLoading(false);
-      }
-    }
-
-    loadUser();
-  }, [router]);
-
-  useEffect(() => {
-    if (employees.length > 0) {
-      loadWeekSchedules();
-    }
-  }, [weekStart, employees.length]);
-
-  function getLocalDateString(date: Date) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-
-    return `${year}-${month}-${day}`;
-  }
-
-  function getWeekDates(startDate: Date) {
-    const dates: Date[] = [];
-
-    for (let i = 0; i < 7; i++) {
-      const date = new Date(startDate);
-      date.setDate(startDate.getDate() + i);
-      dates.push(date);
-    }
-
-    return dates;
-  }
-
-  const weekDates = useMemo(
-    () => getWeekDates(weekStart),
-    [weekStart]
-  );
-
-  const fullTimeOptions = useMemo(() => {
-    const options: string[] = [];
-
-    for (let hour = 5; hour <= 11; hour++) {
-      options.push(`${String(hour).padStart(2, "0")}:00`);
-
-      if (hour !== 11) {
-        options.push(`${String(hour).padStart(2, "0")}:30`);
-      }
-    }
-
-    return options;
+    loadData();
   }, []);
 
-  function calculateEndTime(startTime: string) {
-    if (!startTime) return "";
+  async function loadData() {
+    try {
+      setLoading(true);
 
-    const [hour, minute] = startTime.split(":").map(Number);
+      // Lấy user đang đăng nhập
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
 
-    let endHour = hour + 10;
-    let endMinute = minute;
-
-    if (endHour >= 24) {
-      endHour = endHour - 24;
-    }
-
-    return `${String(endHour).padStart(2, "0")}:${String(
-      endMinute
-    ).padStart(2, "0")}`;
-  }
-
-  function getEmployeeType(item: Employee) {
-    return (item.employment_type || "")
-      .trim()
-      .toLowerCase();
-  }
-
-  function isPartTime(item: Employee) {
-    const type = getEmployeeType(item);
-
-    return (
-      type.includes("part") ||
-      type.includes("time") ||
-      type.includes("bán thời gian")
-    );
-  }
-
-  async function loadEmployees() {
-    setDataLoading(true);
-
-    const { data, error } = await supabase
-      .from("employees")
-      .select("*")
-      .eq("role", "employee")
-      .eq("active", true)
-      .order("full_name");
-
-    if (error) {
-      console.error(error);
-      setDataLoading(false);
-      return;
-    }
-
-    setEmployees(data || []);
-    setDataLoading(false);
-  }
-
-  async function loadWeekSchedules() {
-    setDataLoading(true);
-
-    const startDate = getLocalDateString(weekDates[0]);
-    const endDate = getLocalDateString(weekDates[6]);
-
-    const { data, error } = await supabase
-      .from("schedules")
-      .select("*")
-      .gte("work_date", startDate)
-      .lte("work_date", endDate);
-
-    if (error) {
-      console.error(error);
-      setDataLoading(false);
-      return;
-    }
-
-    setSchedules(data || []);
-
-    const newWeeklySchedule: WeeklyScheduleState = {};
-
-    employees.forEach((item) => {
-      newWeeklySchedule[item.id] = {};
-
-      weekDates.forEach((date) => {
-        const dateString = getLocalDateString(date);
-
-        newWeeklySchedule[item.id][dateString] = {
-          fullTimeStart: "",
-          partTimeShifts: [],
-        };
-      });
-    });
-
-    (data || []).forEach((schedule) => {
-      if (
-        !newWeeklySchedule[schedule.employee_id] ||
-        !newWeeklySchedule[schedule.employee_id][schedule.work_date]
-      ) {
+      if (userError || !user) {
+        router.replace("/login");
         return;
       }
 
-      const currentEmployee = employees.find(
-        (item) => item.id === schedule.employee_id
-      );
+      // Lấy thông tin tài khoản
+      const { data: employeeData, error: employeeError } =
+        await supabase
+          .from("employees")
+          .select("*")
+          .eq("auth_user_id", user.id)
+          .single();
 
-      if (!currentEmployee) return;
-
-      if (isPartTime(currentEmployee)) {
-        newWeeklySchedule[schedule.employee_id][
-          schedule.work_date
-        ].partTimeShifts.push({
-          start: schedule.start_time || "",
-          end: schedule.end_time || "",
-        });
-      } else {
-        newWeeklySchedule[schedule.employee_id][
-          schedule.work_date
-        ].fullTimeStart = schedule.start_time || "";
-      }
-    });
-
-    setWeeklySchedule(newWeeklySchedule);
-    setDataLoading(false);
-  }
-
-  function changeFullTimeShift(
-    employeeId: string,
-    date: string,
-    startTime: string
-  ) {
-    setWeeklySchedule((prev) => ({
-      ...prev,
-      [employeeId]: {
-        ...prev[employeeId],
-        [date]: {
-          ...prev[employeeId]?.[date],
-          fullTimeStart: startTime,
-          partTimeShifts:
-            prev[employeeId]?.[date]?.partTimeShifts || [],
-        },
-      },
-    }));
-  }
-
-  function addPartTimeShift(employeeId: string, date: string) {
-    setWeeklySchedule((prev) => {
-      const current =
-        prev[employeeId]?.[date]?.partTimeShifts || [];
-
-      if (current.length >= 2) {
-        alert("Nhân viên part-time tối đa 2 ca trong một ngày.");
-        return prev;
+      if (employeeError || !employeeData) {
+        await supabase.auth.signOut();
+        router.replace("/login");
+        return;
       }
 
-      return {
-        ...prev,
-        [employeeId]: {
-          ...prev[employeeId],
-          [date]: {
-            ...prev[employeeId]?.[date],
-            fullTimeStart:
-              prev[employeeId]?.[date]?.fullTimeStart || "",
-            partTimeShifts: [
-              ...current,
-              {
-                start: "",
-                end: "",
-              },
-            ],
-          },
-        },
-      };
-    });
-  }
+      // Kiểm tra tài khoản bị khóa
+      if (employeeData.active === false) {
+        await supabase.auth.signOut();
+        router.replace("/login");
+        return;
+      }
 
-  function updatePartTimeShift(
-    employeeId: string,
-    date: string,
-    index: number,
-    field: "start" | "end",
-    value: string
-  ) {
-    setWeeklySchedule((prev) => {
-      const shifts = [
-        ...(prev[employeeId]?.[date]?.partTimeShifts || []),
-      ];
+      // Nếu không phải admin
+      if (employeeData.role !== "admin") {
+        router.replace("/employee");
+        return;
+      }
 
-      shifts[index] = {
-        ...shifts[index],
-        [field]: value,
-      };
+      setEmployee(employeeData);
 
-      return {
-        ...prev,
-        [employeeId]: {
-          ...prev[employeeId],
-          [date]: {
-            ...prev[employeeId]?.[date],
-            fullTimeStart:
-              prev[employeeId]?.[date]?.fullTimeStart || "",
-            partTimeShifts: shifts,
-          },
-        },
-      };
-    });
-  }
+      // Lấy danh sách nhân viên
+      const { data: employeesData } = await supabase
+        .from("employees")
+        .select("*")
+        .eq("active", true)
+        .order("full_name");
 
-  function removePartTimeShift(
-    employeeId: string,
-    date: string,
-    index: number
-  ) {
-    setWeeklySchedule((prev) => {
-      const shifts = [
-        ...(prev[employeeId]?.[date]?.partTimeShifts || []),
-      ];
+      setEmployees(employeesData || []);
 
-      shifts.splice(index, 1);
-
-      return {
-        ...prev,
-        [employeeId]: {
-          ...prev[employeeId],
-          [date]: {
-            ...prev[employeeId]?.[date],
-            fullTimeStart:
-              prev[employeeId]?.[date]?.fullTimeStart || "",
-            partTimeShifts: shifts,
-          },
-        },
-      };
-    });
-  }
-
-  async function saveWeeklySchedule() {
-    setDataLoading(true);
-
-    try {
-      const startDate = getLocalDateString(weekDates[0]);
-      const endDate = getLocalDateString(weekDates[6]);
-
-      const { error: deleteError } = await supabase
+      // Lấy lịch làm
+      const { data: schedulesData } = await supabase
         .from("schedules")
-        .delete()
-        .gte("work_date", startDate)
-        .lte("work_date", endDate);
+        .select("*")
+        .order("work_date", { ascending: false });
 
-      if (deleteError) {
-        throw deleteError;
-      }
+      setSchedules(schedulesData || []);
 
-      const schedulesToInsert: {
-        employee_id: string;
-        work_date: string;
-        start_time: string;
-        end_time: string;
-        note: string | null;
-      }[] = [];
+      // Lấy đơn từ
+      const { data: requestsData } = await supabase
+        .from("requests")
+        .select("*")
+        .order("created_at", { ascending: false });
 
-      employees.forEach((item) => {
-        weekDates.forEach((date) => {
-          const dateString = getLocalDateString(date);
+      setRequests(requestsData || []);
 
-          const dayData =
-            weeklySchedule[item.id]?.[dateString];
+      // Lấy chấm công
+      const { data: attendanceData } = await supabase
+        .from("attendance")
+        .select("*")
+        .order("check_in", { ascending: false });
 
-          if (!dayData) return;
+      setAttendance(attendanceData || []);
 
-          if (isPartTime(item)) {
-            dayData.partTimeShifts.forEach((shift) => {
-              if (shift.start && shift.end) {
-                schedulesToInsert.push({
-                  employee_id: item.id,
-                  work_date: dateString,
-                  start_time: shift.start,
-                  end_time: shift.end,
-                  note: null,
-                });
-              }
-            });
-          } else {
-            if (dayData.fullTimeStart) {
-              schedulesToInsert.push({
-                employee_id: item.id,
-                work_date: dateString,
-                start_time: dayData.fullTimeStart,
-                end_time: calculateEndTime(
-                  dayData.fullTimeStart
-                ),
-                note: null,
-              });
-            }
-          }
-        });
-      });
-
-      if (schedulesToInsert.length > 0) {
-        const { error: insertError } = await supabase
-          .from("schedules")
-          .insert(schedulesToInsert);
-
-        if (insertError) {
-          throw insertError;
-        }
-      }
-
-      alert("Đã lưu lịch làm việc của tuần.");
-
-      await loadWeekSchedules();
-    } catch (error: any) {
+    } catch (error) {
       console.error(error);
-      alert(
-        "Không thể lưu lịch: " +
-          (error?.message || "Có lỗi xảy ra")
-      );
+      setMessage("Có lỗi xảy ra khi tải dữ liệu.");
+    } finally {
+      setLoading(false);
     }
-
-    setDataLoading(false);
-  }
-
-  function goPreviousWeek() {
-    setWeekStart((prev) => {
-      const newDate = new Date(prev);
-      newDate.setDate(prev.getDate() - 7);
-      return newDate;
-    });
-  }
-
-  function goNextWeek() {
-    setWeekStart((prev) => {
-      const newDate = new Date(prev);
-      newDate.setDate(prev.getDate() + 7);
-      return newDate;
-    });
-  }
-
-  function goCurrentWeek() {
-    const now = new Date();
-    const day = now.getDay();
-    const diff = day === 0 ? -6 : 1 - day;
-
-    const monday = new Date(now);
-    monday.setDate(now.getDate() + diff);
-    monday.setHours(0, 0, 0, 0);
-
-    setWeekStart(monday);
   }
 
   async function handleLogout() {
@@ -516,681 +161,765 @@ export default function AdminPage() {
     router.replace("/login");
   }
 
+  // Xếp lịch
+  async function createSchedule() {
+    if (
+      !selectedEmployee ||
+      !workDate ||
+      !startTime ||
+      !endTime
+    ) {
+      alert("Vui lòng nhập đầy đủ thông tin.");
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from("schedules")
+        .insert([
+          {
+            employee_id: selectedEmployee,
+            work_date: workDate,
+            start_time: startTime,
+            end_time: endTime,
+          },
+        ]);
+
+      if (error) {
+        console.error(error);
+        alert(error.message);
+        return;
+      }
+
+      alert("Đã xếp lịch thành công.");
+
+      setSelectedEmployee("");
+      setWorkDate("");
+      setStartTime("");
+      setEndTime("");
+
+      loadData();
+
+    } catch (error) {
+      console.error(error);
+      alert("Không thể xếp lịch.");
+    }
+  }
+
+  // Duyệt đơn
+  async function updateRequestStatus(
+    requestId: string,
+    status: "approved" | "rejected"
+  ) {
+    const { error } = await supabase
+      .from("requests")
+      .update({ status })
+      .eq("id", requestId);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    alert(
+      status === "approved"
+        ? "Đã duyệt yêu cầu."
+        : "Đã từ chối yêu cầu."
+    );
+
+    loadData();
+  }
+
+  function getEmployeeName(employeeId: string) {
+    const found = employees.find(
+      (item) => item.id === employeeId
+    );
+
+    return found?.full_name || "Không rõ";
+  }
+
   if (loading) {
     return (
-      <main
-        style={{
-          minHeight: "100vh",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontFamily: "Arial, sans-serif",
-          background: "#f5f5f3",
-        }}
-      >
-        <div>Đang tải...</div>
+      <main style={styles.loading}>
+        Đang tải dữ liệu...
       </main>
     );
   }
-
-  if (errorMessage) {
-    return (
-      <main
-        style={{
-          minHeight: "100vh",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontFamily: "Arial, sans-serif",
-          background: "#f5f5f3",
-        }}
-      >
-        <div
-          style={{
-            background: "#fff",
-            padding: "30px",
-            borderRadius: "16px",
-            textAlign: "center",
-          }}
-        >
-          <h2>{errorMessage}</h2>
-
-          <button
-            onClick={() => router.replace("/login")}
-          >
-            Về đăng nhập
-          </button>
-        </div>
-      </main>
-    );
-  }
-
-  const weekLabel = `${weekDates[0].toLocaleDateString(
-    "vi-VN"
-  )} - ${weekDates[6].toLocaleDateString("vi-VN")}`;
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        background: "#f5f5f3",
-        fontFamily: "Arial, sans-serif",
-        color: "#263238",
-      }}
-    >
-      <header
-        style={{
-          background: "#ffffff",
-          padding: "20px 40px",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          borderBottom: "1px solid #e5e5e5",
-        }}
-      >
-        <div>
-          <h1
-            style={{
-              margin: 0,
-              color: "#365d4b",
-            }}
-          >
-            SOBA STAFF
-          </h1>
+    <main style={styles.app}>
+      {/* SIDEBAR */}
 
-          <p
-            style={{
-              margin: "5px 0 0",
-              color: "#777",
-            }}
-          >
-            Xin chào {employee?.full_name}
-          </p>
+      <aside style={styles.sidebar}>
+        <div style={styles.logo}>
+          <div>SOBA</div>
+          <div>STAFF</div>
         </div>
 
-        <button
-          onClick={handleLogout}
-          style={{
-            border: "none",
-            background: "#365d4b",
-            color: "#fff",
-            padding: "12px 20px",
-            borderRadius: "8px",
-            cursor: "pointer",
-          }}
-        >
-          Đăng xuất
-        </button>
-      </header>
-
-      <section
-        style={{
-          maxWidth: "1500px",
-          margin: "0 auto",
-          padding: "30px 20px",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            gap: "10px",
-            marginBottom: "25px",
-            flexWrap: "wrap",
-          }}
-        >
+        <nav style={styles.menu}>
           <button
-            onClick={() => setActiveTab("dashboard")}
-            style={{
-              padding: "12px 18px",
-              borderRadius: "8px",
-              border: "none",
-              cursor: "pointer",
-              background:
-                activeTab === "dashboard"
-                  ? "#365d4b"
-                  : "#fff",
-              color:
-                activeTab === "dashboard"
-                  ? "#fff"
-                  : "#263238",
-            }}
+            style={
+              activeMenu === "dashboard"
+                ? styles.menuActive
+                : styles.menuItem
+            }
+            onClick={() => setActiveMenu("dashboard")}
           >
-            Tổng quan
+            Dashboard
           </button>
 
           <button
-            onClick={() => setActiveTab("employees")}
-            style={{
-              padding: "12px 18px",
-              borderRadius: "8px",
-              border: "none",
-              cursor: "pointer",
-              background:
-                activeTab === "employees"
-                  ? "#365d4b"
-                  : "#fff",
-              color:
-                activeTab === "employees"
-                  ? "#fff"
-                  : "#263238",
-            }}
+            style={
+              activeMenu === "employees"
+                ? styles.menuActive
+                : styles.menuItem
+            }
+            onClick={() => setActiveMenu("employees")}
           >
             Nhân viên
           </button>
 
           <button
-            onClick={() => setActiveTab("schedules")}
-            style={{
-              padding: "12px 18px",
-              borderRadius: "8px",
-              border: "none",
-              cursor: "pointer",
-              background:
-                activeTab === "schedules"
-                  ? "#365d4b"
-                  : "#fff",
-              color:
-                activeTab === "schedules"
-                  ? "#fff"
-                  : "#263238",
-            }}
+            style={
+              activeMenu === "schedule"
+                ? styles.menuActive
+                : styles.menuItem
+            }
+            onClick={() => setActiveMenu("schedule")}
           >
-            Lịch làm việc
+            Lịch làm
           </button>
-        </div>
 
-        {activeTab === "dashboard" && (
-          <div
-            style={{
-              background: "#365d4b",
-              color: "#fff",
-              padding: "35px",
-              borderRadius: "20px",
-            }}
+          <button
+            style={
+              activeMenu === "requests"
+                ? styles.menuActive
+                : styles.menuItem
+            }
+            onClick={() => setActiveMenu("requests")}
           >
-            <h2>Trang quản trị SOBA STAFF</h2>
-            <p>
-              Quản lý nhân viên và xếp lịch làm việc theo
-              tuần.
-            </p>
-          </div>
-        )}
+            Đơn từ
+          </button>
 
-        {activeTab === "employees" && (
-          <div>
-            <h2>Nhân viên</h2>
+          <button
+            style={
+              activeMenu === "attendance"
+                ? styles.menuActive
+                : styles.menuItem
+            }
+            onClick={() => setActiveMenu("attendance")}
+          >
+            Chấm công
+          </button>
 
-            <div
-              style={{
-                display: "grid",
-                gap: "12px",
-              }}
-            >
-              {employees.map((item) => (
-                <div
-                  key={item.id}
-                  style={{
-                    background: "#fff",
-                    padding: "18px",
-                    borderRadius: "12px",
-                  }}
-                >
-                  <strong>{item.full_name}</strong>
+          <button
+            style={
+              activeMenu === "reports"
+                ? styles.menuActive
+                : styles.menuItem
+            }
+            onClick={() => setActiveMenu("reports")}
+          >
+            Báo cáo
+          </button>
 
-                  <p
-                    style={{
-                      marginBottom: 0,
-                      color: "#777",
-                    }}
-                  >
-                    {item.employment_type || "Chưa phân loại"}
-                  </p>
-                </div>
-              ))}
+          <button
+            style={
+              activeMenu === "notifications"
+                ? styles.menuActive
+                : styles.menuItem
+            }
+            onClick={() => setActiveMenu("notifications")}
+          >
+            Thông báo
+          </button>
+
+          <button
+            style={styles.menuItem}
+            onClick={handleLogout}
+          >
+            Đăng xuất
+          </button>
+        </nav>
+      </aside>
+
+      {/* MAIN */}
+
+      <section style={styles.content}>
+        {/* DASHBOARD */}
+
+        {activeMenu === "dashboard" && (
+          <>
+            <div style={styles.welcome}>
+              <p>Xin chào Admin</p>
+
+              <h1>
+                {employee?.full_name || "Quản trị viên"}
+              </h1>
+
+              <span>
+                Quản lý nhân viên và hoạt động của cửa hàng
+              </span>
             </div>
-          </div>
-        )}
 
-        {activeTab === "schedules" && (
-          <div>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: "25px",
-                gap: "15px",
-                flexWrap: "wrap",
-              }}
-            >
-              <div>
-                <h2
-                  style={{
-                    margin: 0,
-                  }}
-                >
-                  Xếp lịch làm việc
-                </h2>
+            <div style={styles.cards}>
+              <div
+                style={styles.card}
+                onClick={() => setActiveMenu("employees")}
+              >
+                <h3>Nhân viên</h3>
 
-                <p
-                  style={{
-                    color: "#777",
-                  }}
-                >
-                  {weekLabel}
-                </p>
+                <strong>{employees.length}</strong>
+
+                <p>Nhân viên đang hoạt động</p>
               </div>
 
               <div
-                style={{
-                  display: "flex",
-                  gap: "10px",
-                  flexWrap: "wrap",
-                }}
+                style={styles.card}
+                onClick={() => setActiveMenu("schedule")}
               >
-                <button
-                  onClick={goPreviousWeek}
-                  style={{
-                    padding: "10px 15px",
-                    borderRadius: "8px",
-                    border: "1px solid #ddd",
-                    background: "#fff",
-                    cursor: "pointer",
-                  }}
-                >
-                  ← Tuần trước
-                </button>
+                <h3>Lịch làm</h3>
 
-                <button
-                  onClick={goCurrentWeek}
-                  style={{
-                    padding: "10px 15px",
-                    borderRadius: "8px",
-                    border: "1px solid #ddd",
-                    background: "#fff",
-                    cursor: "pointer",
-                  }}
-                >
-                  Tuần này
-                </button>
+                <strong>{schedules.length}</strong>
 
-                <button
-                  onClick={goNextWeek}
-                  style={{
-                    padding: "10px 15px",
-                    borderRadius: "8px",
-                    border: "1px solid #ddd",
-                    background: "#fff",
-                    cursor: "pointer",
-                  }}
-                >
-                  Tuần sau →
-                </button>
+                <p>Ca làm đã được tạo</p>
+              </div>
 
-                <button
-                  onClick={saveWeeklySchedule}
-                  style={{
-                    padding: "10px 20px",
-                    border: "none",
-                    borderRadius: "8px",
-                    background: "#365d4b",
-                    color: "#fff",
-                    cursor: "pointer",
-                    fontWeight: 600,
-                  }}
-                >
-                  Lưu lịch tuần
-                </button>
+              <div
+                style={styles.card}
+                onClick={() => setActiveMenu("requests")}
+              >
+                <h3>Đơn từ</h3>
+
+                <strong>
+                  {
+                    requests.filter(
+                      (item) =>
+                        item.status === "pending"
+                    ).length
+                  }
+                </strong>
+
+                <p>Đơn đang chờ duyệt</p>
+              </div>
+
+              <div
+                style={styles.card}
+                onClick={() =>
+                  setActiveMenu("attendance")
+                }
+              >
+                <h3>Chấm công</h3>
+
+                <strong>{attendance.length}</strong>
+
+                <p>Lượt chấm công</p>
               </div>
             </div>
+          </>
+        )}
 
-            {dataLoading && (
-              <p>Đang tải...</p>
-            )}
+        {/* NHÂN VIÊN */}
 
-            <div
-              style={{
-                background: "#fff",
-                borderRadius: "16px",
-                overflowX: "auto",
-                boxShadow:
-                  "0 4px 15px rgba(0,0,0,0.05)",
-              }}
-            >
-              <table
-                style={{
-                  borderCollapse: "collapse",
-                  minWidth: "1400px",
-                  width: "100%",
-                }}
-              >
-                <thead>
-                  <tr
+        {activeMenu === "employees" && (
+          <>
+            <h1>Nhân viên</h1>
+
+            <div style={styles.tableBox}>
+              {employees.map((item) => (
+                <div
+                  key={item.id}
+                  style={styles.employeeRow}
+                >
+                  <div>
+                    <strong>{item.full_name}</strong>
+
+                    <p>
+                      {item.employment_type ||
+                        "Chưa xác định"}
+                    </p>
+                  </div>
+
+                  <span
                     style={{
-                      background: "#f1f3ef",
+                      color:
+                        item.role === "admin"
+                          ? "#365d4b"
+                          : "#555",
+                      fontWeight: 600,
                     }}
                   >
-                    <th
-                      style={{
-                        padding: "18px",
-                        textAlign: "left",
-                        minWidth: "180px",
-                        position: "sticky",
-                        left: 0,
-                        background: "#f1f3ef",
-                        zIndex: 2,
-                      }}
+                    {item.role}
+                  </span>
+
+                  <span>
+                    {item.active
+                      ? "Đang hoạt động"
+                      : "Đã khóa"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* LỊCH LÀM */}
+
+        {activeMenu === "schedule" && (
+          <>
+            <h1>Xếp lịch làm</h1>
+
+            <div style={styles.formBox}>
+              <select
+                value={selectedEmployee}
+                onChange={(e) =>
+                  setSelectedEmployee(e.target.value)
+                }
+                style={styles.input}
+              >
+                <option value="">
+                  Chọn nhân viên
+                </option>
+
+                {employees
+                  .filter(
+                    (item) =>
+                      item.role === "employee"
+                  )
+                  .map((item) => (
+                    <option
+                      key={item.id}
+                      value={item.id}
                     >
-                      Nhân viên
-                    </th>
-
-                    {weekDates.map((date) => (
-                      <th
-                        key={getLocalDateString(date)}
-                        style={{
-                          padding: "15px",
-                          minWidth: "170px",
-                          borderLeft:
-                            "1px solid #e5e5e5",
-                        }}
-                      >
-                        <div>
-                          Thứ{" "}
-                          {date.getDay() === 0
-                            ? "CN"
-                            : date.getDay() + 1}
-                        </div>
-
-                        <small
-                          style={{
-                            color: "#777",
-                            fontWeight: 400,
-                          }}
-                        >
-                          {date.toLocaleDateString(
-                            "vi-VN"
-                          )}
-                        </small>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {employees.map((item) => (
-                    <tr key={item.id}>
-                      <td
-                        style={{
-                          padding: "18px",
-                          verticalAlign: "top",
-                          borderTop:
-                            "1px solid #eeeeee",
-                          position: "sticky",
-                          left: 0,
-                          background: "#fff",
-                          zIndex: 1,
-                        }}
-                      >
-                        <strong>{item.full_name}</strong>
-
-                        <p
-                          style={{
-                            margin: "6px 0 0",
-                            fontSize: "13px",
-                            color: "#777",
-                          }}
-                        >
-                          {isPartTime(item)
-                            ? "Part-time"
-                            : "Full-time"}
-                        </p>
-                      </td>
-
-                      {weekDates.map((date) => {
-                        const dateString =
-                          getLocalDateString(date);
-
-                        const dayData =
-                          weeklySchedule[item.id]?.[
-                            dateString
-                          ] || {
-                            fullTimeStart: "",
-                            partTimeShifts: [],
-                          };
-
-                        return (
-                          <td
-                            key={dateString}
-                            style={{
-                              padding: "10px",
-                              verticalAlign: "top",
-                              borderLeft:
-                                "1px solid #eeeeee",
-                              borderTop:
-                                "1px solid #eeeeee",
-                            }}
-                          >
-                            {!isPartTime(item) ? (
-                              <div>
-                                <select
-                                  value={
-                                    dayData.fullTimeStart
-                                  }
-                                  onChange={(e) =>
-                                    changeFullTimeShift(
-                                      item.id,
-                                      dateString,
-                                      e.target.value
-                                    )
-                                  }
-                                  style={{
-                                    width: "100%",
-                                    padding: "10px",
-                                    borderRadius: "8px",
-                                    border:
-                                      "1px solid #ddd",
-                                  }}
-                                >
-                                  <option value="">
-                                    Nghỉ
-                                  </option>
-
-                                  {fullTimeOptions.map(
-                                    (startTime) => (
-                                      <option
-                                        key={startTime}
-                                        value={startTime}
-                                      >
-                                        {startTime} -{" "}
-                                        {calculateEndTime(
-                                          startTime
-                                        )}
-                                      </option>
-                                    )
-                                  )}
-                                </select>
-
-                                {dayData.fullTimeStart && (
-                                  <p
-                                    style={{
-                                      margin:
-                                        "8px 0 0",
-                                      fontSize: "12px",
-                                      color: "#365d4b",
-                                    }}
-                                  >
-                                    10 tiếng / ca
-                                  </p>
-                                )}
-                              </div>
-                            ) : (
-                              <div>
-                                {dayData.partTimeShifts.map(
-                                  (shift, index) => (
-                                    <div
-                                      key={index}
-                                      style={{
-                                        background:
-                                          "#f6f7f5",
-                                        padding: "8px",
-                                        borderRadius:
-                                          "8px",
-                                        marginBottom:
-                                          "8px",
-                                      }}
-                                    >
-                                      <div
-                                        style={{
-                                          display:
-                                            "flex",
-                                          gap: "5px",
-                                          alignItems:
-                                            "center",
-                                        }}
-                                      >
-                                        <input
-                                          type="time"
-                                          value={
-                                            shift.start
-                                          }
-                                          onChange={(e) =>
-                                            updatePartTimeShift(
-                                              item.id,
-                                              dateString,
-                                              index,
-                                              "start",
-                                              e.target
-                                                .value
-                                            )
-                                          }
-                                          style={{
-                                            width:
-                                              "100%",
-                                            padding:
-                                              "6px",
-                                            border:
-                                              "1px solid #ddd",
-                                            borderRadius:
-                                              "6px",
-                                          }}
-                                        />
-
-                                        <span>-</span>
-
-                                        <input
-                                          type="time"
-                                          value={
-                                            shift.end
-                                          }
-                                          onChange={(e) =>
-                                            updatePartTimeShift(
-                                              item.id,
-                                              dateString,
-                                              index,
-                                              "end",
-                                              e.target
-                                                .value
-                                            )
-                                          }
-                                          style={{
-                                            width:
-                                              "100%",
-                                            padding:
-                                              "6px",
-                                            border:
-                                              "1px solid #ddd",
-                                            borderRadius:
-                                              "6px",
-                                          }}
-                                        />
-                                      </div>
-
-                                      <button
-                                        onClick={() =>
-                                          removePartTimeShift(
-                                            item.id,
-                                            dateString,
-                                            index
-                                          )
-                                        }
-                                        style={{
-                                          marginTop:
-                                            "6px",
-                                          border: "none",
-                                          background:
-                                            "transparent",
-                                          color:
-                                            "#b3261e",
-                                          cursor:
-                                            "pointer",
-                                          fontSize:
-                                            "12px",
-                                        }}
-                                      >
-                                        Xóa ca
-                                      </button>
-                                    </div>
-                                  )
-                                )}
-
-                                {dayData.partTimeShifts
-                                  .length < 2 && (
-                                  <button
-                                    onClick={() =>
-                                      addPartTimeShift(
-                                        item.id,
-                                        dateString
-                                      )
-                                    }
-                                    style={{
-                                      width: "100%",
-                                      padding: "8px",
-                                      border:
-                                        "1px dashed #365d4b",
-                                      background:
-                                        "#fff",
-                                      color:
-                                        "#365d4b",
-                                      borderRadius:
-                                        "8px",
-                                      cursor:
-                                        "pointer",
-                                    }}
-                                  >
-                                    + Thêm ca
-                                  </button>
-                                )}
-                              </div>
-                            )}
-                          </td>
-                        );
-                      })}
-                    </tr>
+                      {item.full_name}
+                    </option>
                   ))}
-                </tbody>
-              </table>
+              </select>
+
+              <input
+                type="date"
+                value={workDate}
+                onChange={(e) =>
+                  setWorkDate(e.target.value)
+                }
+                style={styles.input}
+              />
+
+              <input
+                type="time"
+                value={startTime}
+                onChange={(e) =>
+                  setStartTime(e.target.value)
+                }
+                style={styles.input}
+              />
+
+              <input
+                type="time"
+                value={endTime}
+                onChange={(e) =>
+                  setEndTime(e.target.value)
+                }
+                style={styles.input}
+              />
+
+              <button
+                onClick={createSchedule}
+                style={styles.primaryButton}
+              >
+                Xếp lịch
+              </button>
             </div>
 
-            <div
-              style={{
-                marginTop: "20px",
-                padding: "15px",
-                background: "#fff",
-                borderRadius: "10px",
-                color: "#666",
-                fontSize: "14px",
-              }}
-            >
-              <strong>Full-time:</strong> chọn giờ bắt đầu
-              từ 05:00 đến 11:00, cách nhau 30 phút. Hệ
-              thống tự cộng 10 tiếng.
-              <br />
-              <strong>Part-time:</strong> tối đa 2 ca/ngày,
-              tự chọn giờ đến và giờ nghỉ.
+            <h2>Lịch đã tạo</h2>
+
+            <div style={styles.scheduleList}>
+              {schedules.map((item) => (
+                <div
+                  key={item.id}
+                  style={styles.scheduleItem}
+                >
+                  <strong>
+                    {getEmployeeName(
+                      item.employee_id
+                    )}
+                  </strong>
+
+                  <p>
+                    {item.work_date} |{" "}
+                    {item.start_time || "--:--"} -{" "}
+                    {item.end_time || "--:--"}
+                  </p>
+                </div>
+              ))}
+
+              {schedules.length === 0 && (
+                <p>Chưa có lịch làm.</p>
+              )}
             </div>
-          </div>
+          </>
+        )}
+
+        {/* ĐƠN TỪ */}
+
+        {activeMenu === "requests" && (
+          <>
+            <h1>Đơn từ</h1>
+
+            <div style={styles.tableBox}>
+              {requests.map((item) => (
+                <div
+                  key={item.id}
+                  style={styles.requestRow}
+                >
+                  <div>
+                    <strong>
+                      {getEmployeeName(
+                        item.employee_id
+                      )}
+                    </strong>
+
+                    <p>
+                      {item.request_type ||
+                        "Yêu cầu"}
+                    </p>
+
+                    <p>
+                      {item.reason || ""}
+                    </p>
+                  </div>
+
+                  <div>
+                    <strong>
+                      {item.status || "pending"}
+                    </strong>
+                  </div>
+
+                  {item.status === "pending" && (
+                    <div style={styles.actionButtons}>
+                      <button
+                        onClick={() =>
+                          updateRequestStatus(
+                            item.id,
+                            "approved"
+                          )
+                        }
+                        style={styles.approveButton}
+                      >
+                        Duyệt
+                      </button>
+
+                      <button
+                        onClick={() =>
+                          updateRequestStatus(
+                            item.id,
+                            "rejected"
+                          )
+                        }
+                        style={styles.rejectButton}
+                      >
+                        Từ chối
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {requests.length === 0 && (
+                <p>Chưa có đơn từ.</p>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* CHẤM CÔNG */}
+
+        {activeMenu === "attendance" && (
+          <>
+            <h1>Chấm công</h1>
+
+            <div style={styles.tableBox}>
+              {attendance.map((item) => (
+                <div
+                  key={item.id}
+                  style={styles.employeeRow}
+                >
+                  <strong>
+                    {getEmployeeName(
+                      item.employee_id
+                    )}
+                  </strong>
+
+                  <span>
+                    Check-in:{" "}
+                    {item.check_in
+                      ? new Date(
+                          item.check_in
+                        ).toLocaleString("vi-VN")
+                      : "--"}
+                  </span>
+
+                  <span>
+                    Check-out:{" "}
+                    {item.check_out
+                      ? new Date(
+                          item.check_out
+                        ).toLocaleString("vi-VN")
+                      : "--"}
+                  </span>
+                </div>
+              ))}
+
+              {attendance.length === 0 && (
+                <p>Chưa có dữ liệu chấm công.</p>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* BÁO CÁO */}
+
+        {activeMenu === "reports" && (
+          <>
+            <h1>Báo cáo</h1>
+
+            <div style={styles.cards}>
+              <div style={styles.card}>
+                <h3>Tổng nhân viên</h3>
+
+                <strong>{employees.length}</strong>
+              </div>
+
+              <div style={styles.card}>
+                <h3>Tổng lịch làm</h3>
+
+                <strong>{schedules.length}</strong>
+              </div>
+
+              <div style={styles.card}>
+                <h3>Tổng đơn từ</h3>
+
+                <strong>{requests.length}</strong>
+              </div>
+
+              <div style={styles.card}>
+                <h3>Tổng chấm công</h3>
+
+                <strong>{attendance.length}</strong>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* THÔNG BÁO */}
+
+        {activeMenu === "notifications" && (
+          <>
+            <h1>Thông báo</h1>
+
+            <div style={styles.tableBox}>
+              <p>
+                Chức năng thông báo sẽ được kết nối
+                tiếp theo.
+              </p>
+            </div>
+          </>
+        )}
+
+        {message && (
+          <p style={{ color: "red" }}>
+            {message}
+          </p>
         )}
       </section>
     </main>
   );
 }
+
+const styles: Record<string, React.CSSProperties> = {
+  app: {
+    minHeight: "100vh",
+    display: "flex",
+    background: "#f5f5f3",
+    fontFamily: "Arial, sans-serif",
+    color: "#263238",
+  },
+
+  loading: {
+    minHeight: "100vh",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "#f5f5f3",
+    fontFamily: "Arial, sans-serif",
+    fontSize: "20px",
+  },
+
+  sidebar: {
+    width: "220px",
+    minHeight: "100vh",
+    background: "#10231d",
+    color: "#ffffff",
+    padding: "30px 20px",
+    boxSizing: "border-box",
+  },
+
+  logo: {
+    fontSize: "28px",
+    fontWeight: 700,
+    lineHeight: 1.1,
+    marginBottom: "50px",
+  },
+
+  menu: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+  },
+
+  menuItem: {
+    background: "transparent",
+    color: "#d5ddd9",
+    border: "none",
+    padding: "14px 12px",
+    textAlign: "left",
+    cursor: "pointer",
+    borderRadius: "8px",
+    fontSize: "15px",
+  },
+
+  menuActive: {
+    background: "#365d4b",
+    color: "#ffffff",
+    border: "none",
+    padding: "14px 12px",
+    textAlign: "left",
+    cursor: "pointer",
+    borderRadius: "8px",
+    fontSize: "15px",
+    fontWeight: 600,
+  },
+
+  content: {
+    flex: 1,
+    padding: "40px",
+    boxSizing: "border-box",
+    maxWidth: "1400px",
+  },
+
+  welcome: {
+    background: "#365d4b",
+    color: "#ffffff",
+    padding: "35px",
+    borderRadius: "24px",
+    marginBottom: "30px",
+  },
+
+  cards: {
+    display: "grid",
+    gridTemplateColumns:
+      "repeat(auto-fit, minmax(220px, 1fr))",
+    gap: "20px",
+  },
+
+  card: {
+    background: "#ffffff",
+    padding: "28px",
+    borderRadius: "18px",
+    boxShadow:
+      "0 5px 20px rgba(0,0,0,0.06)",
+    cursor: "pointer",
+  },
+
+  formBox: {
+    background: "#ffffff",
+    padding: "25px",
+    borderRadius: "20px",
+    maxWidth: "600px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "12px",
+    marginBottom: "30px",
+  },
+
+  input: {
+    width: "100%",
+    padding: "14px",
+    borderRadius: "10px",
+    border: "1px solid #ddd",
+    fontSize: "15px",
+    boxSizing: "border-box",
+  },
+
+  primaryButton: {
+    background: "#365d4b",
+    color: "#ffffff",
+    border: "none",
+    padding: "14px",
+    borderRadius: "10px",
+    cursor: "pointer",
+    fontWeight: 600,
+    fontSize: "15px",
+  },
+
+  tableBox: {
+    background: "#ffffff",
+    borderRadius: "18px",
+    padding: "20px",
+    boxShadow:
+      "0 5px 20px rgba(0,0,0,0.05)",
+  },
+
+  employeeRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "18px 0",
+    borderBottom: "1px solid #eeeeee",
+    gap: "20px",
+  },
+
+  requestRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "20px 0",
+    borderBottom: "1px solid #eeeeee",
+    gap: "20px",
+  },
+
+  actionButtons: {
+    display: "flex",
+    gap: "10px",
+  },
+
+  approveButton: {
+    background: "#365d4b",
+    color: "#ffffff",
+    border: "none",
+    padding: "10px 16px",
+    borderRadius: "8px",
+    cursor: "pointer",
+  },
+
+  rejectButton: {
+    background: "#c85a54",
+    color: "#ffffff",
+    border: "none",
+    padding: "10px 16px",
+    borderRadius: "8px",
+    cursor: "pointer",
+  },
+
+  scheduleList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "12px",
+  },
+
+  scheduleItem: {
+    background: "#ffffff",
+    padding: "20px",
+    borderRadius: "14px",
+  },
+};
