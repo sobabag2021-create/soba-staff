@@ -69,8 +69,10 @@ function getMonday(date: Date) {
   const result = new Date(date);
   const day = result.getDay();
   const diff = day === 0 ? -6 : 1 - day;
+
   result.setDate(result.getDate() + diff);
   result.setHours(0, 0, 0, 0);
+
   return result;
 }
 
@@ -78,17 +80,21 @@ function formatDateInput(date: Date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
+
   return `${year}-${month}-${day}`;
 }
 
 function formatDateVN(dateString: string) {
   if (!dateString) return "";
+
   const date = new Date(`${dateString}T00:00:00`);
+
   return date.toLocaleDateString("vi-VN");
 }
 
 function formatTime(dateString: string | null) {
   if (!dateString) return "--:--";
+
   return new Intl.DateTimeFormat("vi-VN", {
     timeZone: "Asia/Ho_Chi_Minh",
     hour: "2-digit",
@@ -97,10 +103,15 @@ function formatTime(dateString: string | null) {
   }).format(new Date(dateString));
 }
 
-function formatTimeRange(startTime: string | null, endTime: string | null) {
+function formatTimeRange(
+  startTime: string | null,
+  endTime: string | null
+) {
   if (!startTime && !endTime) return "Chưa có giờ";
+
   const start = startTime ? startTime.slice(0, 5) : "--:--";
   const end = endTime ? endTime.slice(0, 5) : "--:--";
+
   return `${start} - ${end}`;
 }
 
@@ -114,6 +125,7 @@ function getDayName(index: number) {
     "Thứ 7",
     "Chủ nhật",
   ];
+
   return names[index];
 }
 
@@ -123,6 +135,7 @@ function requestTypeLabel(type: string) {
   if (type === "early_leave") return "Xin về sớm";
   if (type === "overtime") return "Xin tăng ca";
   if (type === "checkin_missing") return "Bổ sung công";
+
   return type;
 }
 
@@ -130,18 +143,21 @@ function statusLabel(status: string) {
   if (status === "pending") return "Chờ duyệt";
   if (status === "approved") return "Đã duyệt";
   if (status === "rejected") return "Từ chối";
+
   return status;
 }
 
 function statusColor(status: string) {
   if (status === "approved") return "#2f7d4c";
   if (status === "rejected") return "#c0392b";
+
   return "#b7791f";
 }
 
 function statusBackground(status: string) {
   if (status === "approved") return "#e8f5ec";
   if (status === "rejected") return "#fdecea";
+
   return "#fff6df";
 }
 
@@ -149,34 +165,58 @@ export default function EmployeePage() {
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
-  const [processingAttendance, setProcessingAttendance] = useState(false);
-  const [employee, setEmployee] = useState<Employee | null>(null);
-  const [attendance, setAttendance] = useState<Attendance | null>(null);
-  const [schedules, setSchedules] = useState<Schedule[]>([]);
-  const [requests, setRequests] = useState<RequestItem[]>([]);
+  const [processingAttendance, setProcessingAttendance] =
+    useState(false);
+
+  const [employee, setEmployee] =
+    useState<Employee | null>(null);
+
+  const [attendance, setAttendance] =
+    useState<Attendance | null>(null);
+
+  const [schedules, setSchedules] =
+    useState<Schedule[]>([]);
+
+  const [requests, setRequests] =
+    useState<RequestItem[]>([]);
+
   const [weekOffset, setWeekOffset] = useState(0);
 
-  const [requestType, setRequestType] = useState<RequestType>("leave");
-  const [requestDate, setRequestDate] = useState(getVietnamDateString());
+  const [requestType, setRequestType] =
+    useState<RequestType>("leave");
+
+  const [requestDate, setRequestDate] =
+    useState(getVietnamDateString());
+
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
   const [reason, setReason] = useState("");
-  const [submittingRequest, setSubmittingRequest] = useState(false);
+
+  const [submittingRequest, setSubmittingRequest] =
+    useState(false);
+
   const [message, setMessage] = useState("");
 
   const weekRange = useMemo(() => {
-    const today = new Date();
-    const monday = getMonday(today);
+    const monday = getMonday(new Date());
+
     monday.setDate(monday.getDate() + weekOffset * 7);
+
     const sunday = new Date(monday);
     sunday.setDate(monday.getDate() + 6);
-    return { monday, sunday };
+
+    return {
+      monday,
+      sunday,
+    };
   }, [weekOffset]);
 
   const weekDays = useMemo(() => {
     return Array.from({ length: 7 }, (_, index) => {
       const date = new Date(weekRange.monday);
+
       date.setDate(weekRange.monday.getDate() + index);
+
       return date;
     });
   }, [weekRange]);
@@ -192,7 +232,10 @@ export default function EmployeePage() {
       return null;
     }
 
-    const { data: employeeData, error: employeeError } = await supabase
+    const {
+      data: employeeData,
+      error: employeeError,
+    } = await supabase
       .from("employees")
       .select("*")
       .eq("auth_user_id", user.id)
@@ -200,29 +243,38 @@ export default function EmployeePage() {
 
     if (employeeError || !employeeData) {
       console.error(employeeError);
+
       await supabase.auth.signOut();
+
       router.replace("/login");
+
       return null;
     }
 
     if (employeeData.active === false) {
       alert("Tài khoản của bạn đã bị khóa.");
+
       await supabase.auth.signOut();
+
       router.replace("/login");
+
       return null;
     }
 
     if (employeeData.role === "admin") {
       router.replace("/admin");
+
       return null;
     }
 
     setEmployee(employeeData);
+
     return employeeData;
   }
 
   async function loadTodayAttendance(employeeId: string) {
     const today = getVietnamDateString();
+
     const { data, error } = await supabase
       .from("attendance")
       .select("*")
@@ -233,6 +285,7 @@ export default function EmployeePage() {
     if (error) {
       console.error("Lỗi tải chấm công:", error.message);
     }
+
     setAttendance(data || null);
   }
 
@@ -246,13 +299,18 @@ export default function EmployeePage() {
       .eq("employee_id", employeeId)
       .gte("work_date", startDate)
       .lte("work_date", endDate)
-      .order("work_date", { ascending: true })
-      .order("start_time", { ascending: true });
+      .order("work_date", {
+        ascending: true,
+      })
+      .order("start_time", {
+        ascending: true,
+      });
 
     if (error) {
       console.error("Lỗi tải lịch:", error.message);
       return;
     }
+
     setSchedules(data || []);
   }
 
@@ -261,20 +319,25 @@ export default function EmployeePage() {
       .from("requests")
       .select("*")
       .eq("employee_id", employeeId)
-      .order("created_at", { ascending: false })
-      .limit(20);
+      .order("created_at", {
+        ascending: false,
+      })
+      .limit(30);
 
     if (error) {
       console.error("Lỗi tải yêu cầu:", error.message);
       return;
     }
+
     setRequests(data || []);
   }
 
   async function loadAll() {
     setLoading(true);
+
     try {
       const employeeData = await loadEmployee();
+
       if (!employeeData) return;
 
       await Promise.all([
@@ -296,55 +359,36 @@ export default function EmployeePage() {
 
   useEffect(() => {
     if (!employee) return;
+
     loadSchedules(employee.id);
   }, [weekOffset, employee]);
 
   async function handleCheckIn() {
     if (!employee) return;
+
     if (attendance?.check_in) {
       alert("Bạn đã check-in hôm nay rồi.");
       return;
     }
 
     setProcessingAttendance(true);
+
     try {
       const now = new Date();
       const today = getVietnamDateString();
-      const todaySchedules = schedules.filter(
-        (s) => s.work_date === today
-      );
 
-      let lateMinutes = 0;
-      if (todaySchedules.length > 0 && todaySchedules[0].start_time) {
-        const scheduledStart = todaySchedules[0].start_time.slice(0, 5);
-        const vietnamTime = new Intl.DateTimeFormat("en-GB", {
-          timeZone: "Asia/Ho_Chi_Minh",
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: false,
-        })
-          .format(now)
-          .split(":");
-
-        const currentMinutes =
-          Number(vietnamTime[0]) * 60 + Number(vietnamTime[1]);
-        const scheduledParts = scheduledStart.split(":");
-        const scheduledMinutes =
-          Number(scheduledParts[0]) * 60 + Number(scheduledParts[1]);
-
-        lateMinutes = Math.max(0, currentMinutes - scheduledMinutes);
-      }
-
-      const { error } = await supabase.from("attendance").insert({
-        employee_id: employee.id,
-        work_date: today,
-        check_in: now.toISOString(),
-        check_out: null,
-        late_minutes: lateMinutes,
-        makeup_minutes: 0,
-        penalty_amount: 0,
-        status: "checked_in",
-      });
+      const { error } = await supabase
+        .from("attendance")
+        .insert({
+          employee_id: employee.id,
+          work_date: today,
+          check_in: now.toISOString(),
+          check_out: null,
+          late_minutes: 0,
+          makeup_minutes: 0,
+          penalty_amount: 0,
+          status: "checked_in",
+        });
 
       if (error) {
         alert(`Không thể check-in: ${error.message}`);
@@ -352,6 +396,7 @@ export default function EmployeePage() {
       }
 
       alert("Check-in thành công.");
+
       await loadTodayAttendance(employee.id);
     } catch (error) {
       console.error(error);
@@ -363,18 +408,22 @@ export default function EmployeePage() {
 
   async function handleCheckOut() {
     if (!employee) return;
+
     if (!attendance?.check_in) {
       alert("Bạn chưa check-in hôm nay.");
       return;
     }
+
     if (attendance.check_out) {
       alert("Bạn đã check-out hôm nay rồi.");
       return;
     }
 
     setProcessingAttendance(true);
+
     try {
       const now = new Date();
+
       const { error } = await supabase
         .from("attendance")
         .update({
@@ -389,6 +438,7 @@ export default function EmployeePage() {
       }
 
       alert("Check-out thành công.");
+
       await loadTodayAttendance(employee.id);
     } catch (error) {
       console.error(error);
@@ -400,6 +450,7 @@ export default function EmployeePage() {
 
   async function handleSubmitRequest() {
     if (!employee) return;
+
     setMessage("");
 
     if (!requestDate) {
@@ -417,8 +468,14 @@ export default function EmployeePage() {
       return;
     }
 
-    if (requestType === "overtime" && (!startTime || !endTime)) {
-      setMessage("Vui lòng nhập giờ bắt đầu và kết thúc tăng ca.");
+    if (
+      (requestType === "overtime" ||
+        requestType === "checkin_missing") &&
+      (!startTime || !endTime)
+    ) {
+      setMessage(
+        "Vui lòng nhập đầy đủ giờ bắt đầu và kết thúc."
+      );
       return;
     }
 
@@ -430,37 +487,53 @@ export default function EmployeePage() {
     setSubmittingRequest(true);
 
     try {
-      const { error } = await supabase.from("requests").insert({
-        employee_id: employee.id,
-        request_type: requestType,
-        request_date: requestDate,
-        start_time:
-          requestType === "late" || requestType === "overtime"
-            ? startTime
-            : null,
-        end_time:
-          requestType === "early_leave" || requestType === "overtime"
-            ? endTime
-            : null,
-        reason: reason.trim() || null,
-        status: "pending",
-      });
+      const { error } = await supabase
+        .from("requests")
+        .insert({
+          employee_id: employee.id,
+          request_type: requestType,
+          request_date: requestDate,
+
+          start_time:
+            requestType === "late" ||
+            requestType === "overtime" ||
+            requestType === "checkin_missing"
+              ? startTime
+              : null,
+
+          end_time:
+            requestType === "early_leave" ||
+            requestType === "overtime" ||
+            requestType === "checkin_missing"
+              ? endTime
+              : null,
+
+          reason: reason.trim() || null,
+          status: "pending",
+        });
 
       if (error) {
         console.error(error);
-        setMessage(`Không thể gửi yêu cầu: ${error.message}`);
+
+        setMessage(
+          `Không thể gửi yêu cầu: ${error.message}`
+        );
+
         return;
       }
 
-      setMessage("Đã gửi yêu cầu thành công. Vui lòng chờ Admin duyệt.");
+      setMessage(
+        "Đã gửi yêu cầu thành công. Vui lòng chờ Admin duyệt."
+      );
+
       setReason("");
       setStartTime("");
       setEndTime("");
-      setRequestDate(getVietnamDateString());
 
       await loadRequests(employee.id);
     } catch (error) {
       console.error(error);
+
       setMessage("Có lỗi khi gửi yêu cầu.");
     } finally {
       setSubmittingRequest(false);
@@ -469,11 +542,14 @@ export default function EmployeePage() {
 
   async function handleLogout() {
     await supabase.auth.signOut();
+
     router.replace("/login");
   }
 
   function getSchedulesByDate(dateString: string) {
-    return schedules.filter((s) => s.work_date === dateString);
+    return schedules.filter(
+      (schedule) => schedule.work_date === dateString
+    );
   }
 
   if (loading) {
@@ -504,7 +580,6 @@ export default function EmployeePage() {
         paddingBottom: "60px",
       }}
     >
-      {/* HEADER */}
       <header
         style={{
           maxWidth: "1000px",
@@ -518,13 +593,25 @@ export default function EmployeePage() {
         }}
       >
         <div>
-          <h1 style={{ margin: 0, fontSize: "34px", letterSpacing: "1px" }}>
+          <h1
+            style={{
+              margin: 0,
+              fontSize: "34px",
+            }}
+          >
             SOBA STAFF
           </h1>
-          <p style={{ margin: "8px 0 0", color: "#56616a" }}>
+
+          <p
+            style={{
+              margin: "8px 0 0",
+              color: "#56616a",
+            }}
+          >
             Giao diện nhân viên
           </p>
         </div>
+
         <button
           onClick={handleLogout}
           style={{
@@ -548,7 +635,6 @@ export default function EmployeePage() {
           padding: "0 20px",
         }}
       >
-        {/* THÔNG TIN NHÂN VIÊN */}
         <section
           style={{
             background: GREEN,
@@ -558,16 +644,29 @@ export default function EmployeePage() {
             marginBottom: "24px",
           }}
         >
-          <div style={{ fontSize: "17px", opacity: 0.85 }}>Xin chào</div>
-          <h2 style={{ margin: "12px 0 8px", fontSize: "30px" }}>
+          <div
+            style={{
+              fontSize: "17px",
+              opacity: 0.85,
+            }}
+          >
+            Xin chào
+          </div>
+
+          <h2
+            style={{
+              margin: "12px 0 8px",
+              fontSize: "30px",
+            }}
+          >
             {employee?.full_name}
           </h2>
+
           <div style={{ opacity: 0.9 }}>
             {employee?.employment_type || "Nhân viên"}
           </div>
         </section>
 
-        {/* CHẤM CÔNG */}
         <section
           style={{
             background: "#ffffff",
@@ -576,11 +675,20 @@ export default function EmployeePage() {
             marginBottom: "24px",
           }}
         >
-          <h2 style={{ marginTop: 0, fontSize: "26px" }}>Chấm công hôm nay</h2>
+          <h2
+            style={{
+              marginTop: 0,
+              fontSize: "26px",
+            }}
+          >
+            Chấm công hôm nay
+          </h2>
+
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+              gridTemplateColumns:
+                "repeat(auto-fit, minmax(240px, 1fr))",
               gap: "16px",
             }}
           >
@@ -591,9 +699,15 @@ export default function EmployeePage() {
                 padding: "22px",
               }}
             >
-              <div style={{ color: "#56616a", marginBottom: "10px" }}>
+              <div
+                style={{
+                  color: "#56616a",
+                  marginBottom: "10px",
+                }}
+              >
                 Check-in
               </div>
+
               <strong style={{ fontSize: "26px" }}>
                 {formatTime(attendance?.check_in || null)}
               </strong>
@@ -606,9 +720,15 @@ export default function EmployeePage() {
                 padding: "22px",
               }}
             >
-              <div style={{ color: "#56616a", marginBottom: "10px" }}>
+              <div
+                style={{
+                  color: "#56616a",
+                  marginBottom: "10px",
+                }}
+              >
                 Check-out
               </div>
+
               <strong style={{ fontSize: "26px" }}>
                 {formatTime(attendance?.check_out || null)}
               </strong>
@@ -618,7 +738,8 @@ export default function EmployeePage() {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gridTemplateColumns:
+                "repeat(auto-fit, minmax(220px, 1fr))",
               gap: "14px",
               marginTop: "16px",
             }}
@@ -626,11 +747,14 @@ export default function EmployeePage() {
             <button
               onClick={handleCheckIn}
               disabled={
-                processingAttendance || Boolean(attendance?.check_in)
+                processingAttendance ||
+                Boolean(attendance?.check_in)
               }
               style={{
                 border: "none",
-                background: attendance?.check_in ? "#9aa8a2" : GREEN,
+                background: attendance?.check_in
+                  ? "#9aa8a2"
+                  : GREEN,
                 color: "#ffffff",
                 padding: "16px",
                 borderRadius: "12px",
@@ -640,7 +764,9 @@ export default function EmployeePage() {
                     : "pointer",
                 fontWeight: 700,
                 opacity:
-                  processingAttendance || attendance?.check_in ? 0.7 : 1,
+                  processingAttendance || attendance?.check_in
+                    ? 0.7
+                    : 1,
               }}
             >
               {attendance?.check_in
@@ -660,7 +786,8 @@ export default function EmployeePage() {
               style={{
                 border: "none",
                 background:
-                  !attendance?.check_in || attendance?.check_out
+                  !attendance?.check_in ||
+                  attendance?.check_out
                     ? "#9aa8a2"
                     : GREEN,
                 color: "#ffffff",
@@ -690,7 +817,6 @@ export default function EmployeePage() {
           </div>
         </section>
 
-        {/* LỊCH LÀM VIỆC */}
         <section
           style={{
             background: "#ffffff",
@@ -699,7 +825,15 @@ export default function EmployeePage() {
             marginBottom: "24px",
           }}
         >
-          <h2 style={{ marginTop: 0, fontSize: "26px" }}>Lịch làm việc</h2>
+          <h2
+            style={{
+              marginTop: 0,
+              fontSize: "26px",
+            }}
+          >
+            Lịch làm việc
+          </h2>
+
           <div
             style={{
               display: "flex",
@@ -711,7 +845,9 @@ export default function EmployeePage() {
             }}
           >
             <button
-              onClick={() => setWeekOffset((v) => v - 1)}
+              onClick={() =>
+                setWeekOffset((value) => value - 1)
+              }
               style={{
                 border: "none",
                 background: "#eef1ef",
@@ -727,23 +863,20 @@ export default function EmployeePage() {
 
             <div style={{ textAlign: "center" }}>
               <strong>
-                {formatDateVN(formatDateInput(weekRange.monday))}
+                {formatDateVN(
+                  formatDateInput(weekRange.monday)
+                )}
                 {" - "}
-                {formatDateVN(formatDateInput(weekRange.sunday))}
+                {formatDateVN(
+                  formatDateInput(weekRange.sunday)
+                )}
               </strong>
-              <div
-                style={{ marginTop: "6px", color: "#647077", fontSize: "14px" }}
-              >
-                {weekOffset === 0
-                  ? "Tuần này"
-                  : weekOffset < 0
-                  ? "Tuần trước"
-                  : "Tuần sau"}
-              </div>
             </div>
 
             <button
-              onClick={() => setWeekOffset((v) => v + 1)}
+              onClick={() =>
+                setWeekOffset((value) => value + 1)
+              }
               style={{
                 border: "none",
                 background: "#eef1ef",
@@ -758,36 +891,22 @@ export default function EmployeePage() {
             </button>
           </div>
 
-          {weekOffset !== 0 && (
-            <div style={{ textAlign: "center", marginBottom: "20px" }}>
-              <button
-                onClick={() => setWeekOffset(0)}
-                style={{
-                  border: "none",
-                  background: GREEN,
-                  color: "#ffffff",
-                  padding: "10px 18px",
-                  borderRadius: "10px",
-                  cursor: "pointer",
-                  fontWeight: 700,
-                }}
-              >
-                Về tuần này
-              </button>
-            </div>
-          )}
-
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+              gridTemplateColumns:
+                "repeat(auto-fit, minmax(160px, 1fr))",
               gap: "14px",
             }}
           >
             {weekDays.map((date, index) => {
               const dateString = formatDateInput(date);
-              const daySchedules = getSchedulesByDate(dateString);
-              const isToday = dateString === getVietnamDateString();
+
+              const daySchedules =
+                getSchedulesByDate(dateString);
+
+              const isToday =
+                dateString === getVietnamDateString();
 
               return (
                 <div
@@ -799,10 +918,13 @@ export default function EmployeePage() {
                     borderRadius: "18px",
                     padding: "16px",
                     minHeight: "140px",
-                    background: isToday ? "#f4faf6" : "#ffffff",
+                    background: isToday
+                      ? "#f4faf6"
+                      : "#ffffff",
                   }}
                 >
                   <strong>{getDayName(index)}</strong>
+
                   <div
                     style={{
                       marginTop: "6px",
@@ -814,7 +936,12 @@ export default function EmployeePage() {
                   </div>
 
                   {daySchedules.length === 0 ? (
-                    <div style={{ marginTop: "18px", color: "#8b9499" }}>
+                    <div
+                      style={{
+                        marginTop: "18px",
+                        color: "#8b9499",
+                      }}
+                    >
                       Nghỉ
                     </div>
                   ) : (
@@ -849,7 +976,6 @@ export default function EmployeePage() {
           </div>
         </section>
 
-        {/* GỬI YÊU CẦU */}
         <section
           style={{
             background: "#ffffff",
@@ -858,28 +984,46 @@ export default function EmployeePage() {
             marginBottom: "24px",
           }}
         >
-          <h2 style={{ marginTop: 0, fontSize: "26px" }}>Gửi yêu cầu</h2>
+          <h2
+            style={{
+              marginTop: 0,
+              fontSize: "26px",
+            }}
+          >
+            Gửi yêu cầu
+          </h2>
 
-          {/* LOẠI YÊU CẦU */}
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
-              gap: "12px",
+              gridTemplateColumns:
+                "repeat(auto-fit, minmax(140px, 1fr))",
+              gap: "10px",
               marginBottom: "18px",
             }}
           >
             {[
               { value: "leave", label: "Xin nghỉ" },
               { value: "late", label: "Đi muộn" },
-              { value: "early_leave", label: "Về sớm" },
-              { value: "overtime", label: "Tăng ca" },
-              { value: "checkin_missing", label: "Bổ sung công" },
+              {
+                value: "early_leave",
+                label: "Về sớm",
+              },
+              {
+                value: "overtime",
+                label: "Tăng ca",
+              },
+              {
+                value: "checkin_missing",
+                label: "Bổ sung công",
+              },
             ].map((item) => (
               <button
                 key={item.value}
                 onClick={() => {
-                  setRequestType(item.value as RequestType);
+                  setRequestType(
+                    item.value as RequestType
+                  );
                   setStartTime("");
                   setEndTime("");
                   setMessage("");
@@ -890,7 +1034,9 @@ export default function EmployeePage() {
                       ? `2px solid ${GREEN}`
                       : "1px solid #d8ddda",
                   background:
-                    requestType === item.value ? "#eef6f0" : "#ffffff",
+                    requestType === item.value
+                      ? "#eef6f0"
+                      : "#ffffff",
                   color: TEXT,
                   padding: "14px 10px",
                   borderRadius: "12px",
@@ -903,22 +1049,30 @@ export default function EmployeePage() {
             ))}
           </div>
 
-          <div style={{ display: "grid", gap: "14px" }}>
+          <div
+            style={{
+              display: "grid",
+              gap: "14px",
+            }}
+          >
             <input
               type="date"
               value={requestDate}
-              onChange={(e) => setRequestDate(e.target.value)}
+              onChange={(e) =>
+                setRequestDate(e.target.value)
+              }
               style={{
                 padding: "15px",
                 borderRadius: "12px",
                 border: "1px solid #d8ddda",
                 color: TEXT,
-                backgroundColor: "#ffffff",
                 fontSize: "16px",
               }}
             />
 
-            {(requestType === "late" || requestType === "overtime") && (
+            {(requestType === "late" ||
+              requestType === "overtime" ||
+              requestType === "checkin_missing") && (
               <div>
                 <label
                   style={{
@@ -929,12 +1083,17 @@ export default function EmployeePage() {
                 >
                   {requestType === "late"
                     ? "Giờ dự kiến đến"
+                    : requestType === "checkin_missing"
+                    ? "Giờ bắt đầu làm"
                     : "Giờ bắt đầu tăng ca"}
                 </label>
+
                 <input
                   type="time"
                   value={startTime}
-                  onChange={(e) => setStartTime(e.target.value)}
+                  onChange={(e) =>
+                    setStartTime(e.target.value)
+                  }
                   style={{
                     width: "100%",
                     boxSizing: "border-box",
@@ -942,14 +1101,15 @@ export default function EmployeePage() {
                     borderRadius: "12px",
                     border: "1px solid #d8ddda",
                     color: TEXT,
-                    backgroundColor: "#ffffff",
                     fontSize: "16px",
                   }}
                 />
               </div>
             )}
 
-            {(requestType === "early_leave" || requestType === "overtime") && (
+            {(requestType === "early_leave" ||
+              requestType === "overtime" ||
+              requestType === "checkin_missing") && (
               <div>
                 <label
                   style={{
@@ -960,12 +1120,17 @@ export default function EmployeePage() {
                 >
                   {requestType === "early_leave"
                     ? "Giờ muốn về"
+                    : requestType === "checkin_missing"
+                    ? "Giờ kết thúc làm"
                     : "Giờ kết thúc tăng ca"}
                 </label>
+
                 <input
                   type="time"
                   value={endTime}
-                  onChange={(e) => setEndTime(e.target.value)}
+                  onChange={(e) =>
+                    setEndTime(e.target.value)
+                  }
                   style={{
                     width: "100%",
                     boxSizing: "border-box",
@@ -973,7 +1138,6 @@ export default function EmployeePage() {
                     borderRadius: "12px",
                     border: "1px solid #d8ddda",
                     color: TEXT,
-                    backgroundColor: "#ffffff",
                     fontSize: "16px",
                   }}
                 />
@@ -982,9 +1146,11 @@ export default function EmployeePage() {
 
             <textarea
               value={reason}
-              onChange={(e) => setReason(e.target.value)}
+              onChange={(e) =>
+                setReason(e.target.value)
+              }
               placeholder="Nhập lý do..."
-              rows={4}
+              rows={5}
               style={{
                 width: "100%",
                 boxSizing: "border-box",
@@ -992,7 +1158,6 @@ export default function EmployeePage() {
                 borderRadius: "12px",
                 border: "1px solid #d8ddda",
                 color: TEXT,
-                backgroundColor: "#ffffff",
                 fontSize: "16px",
                 resize: "vertical",
               }}
@@ -1007,13 +1172,17 @@ export default function EmployeePage() {
                 color: "#ffffff",
                 padding: "16px",
                 borderRadius: "12px",
-                cursor: submittingRequest ? "not-allowed" : "pointer",
+                cursor: submittingRequest
+                  ? "not-allowed"
+                  : "pointer",
                 fontWeight: 700,
                 fontSize: "16px",
                 opacity: submittingRequest ? 0.7 : 1,
               }}
             >
-              {submittingRequest ? "Đang gửi..." : "Gửi yêu cầu"}
+              {submittingRequest
+                ? "Đang gửi..."
+                : "Gửi yêu cầu"}
             </button>
 
             {message && (
@@ -1022,7 +1191,8 @@ export default function EmployeePage() {
                   padding: "14px",
                   borderRadius: "10px",
                   background:
-                    message.includes("thành công") || message.includes("Đã gửi")
+                    message.includes("thành công") ||
+                    message.includes("Đã gửi")
                       ? "#e8f5ec"
                       : "#fdecea",
                   color: TEXT,
@@ -1034,7 +1204,6 @@ export default function EmployeePage() {
           </div>
         </section>
 
-        {/* YÊU CẦU CỦA TÔI */}
         <section
           style={{
             background: "#ffffff",
@@ -1042,7 +1211,14 @@ export default function EmployeePage() {
             padding: "26px",
           }}
         >
-          <h2 style={{ marginTop: 0, fontSize: "26px" }}>Yêu cầu của tôi</h2>
+          <h2
+            style={{
+              marginTop: 0,
+              fontSize: "26px",
+            }}
+          >
+            Yêu cầu của tôi
+          </h2>
 
           {requests.length === 0 ? (
             <div
@@ -1056,7 +1232,12 @@ export default function EmployeePage() {
               Chưa có yêu cầu nào.
             </div>
           ) : (
-            <div style={{ display: "grid", gap: "14px" }}>
+            <div
+              style={{
+                display: "grid",
+                gap: "14px",
+              }}
+            >
               {requests.map((request) => (
                 <div
                   key={request.id}
@@ -1076,18 +1257,37 @@ export default function EmployeePage() {
                     }}
                   >
                     <div>
-                      <strong style={{ fontSize: "18px" }}>
-                        {requestTypeLabel(request.request_type)}
+                      <strong
+                        style={{
+                          fontSize: "18px",
+                        }}
+                      >
+                        {requestTypeLabel(
+                          request.request_type
+                        )}
                       </strong>
-                      <div style={{ marginTop: "7px", color: "#667279" }}>
-                        Ngày: {formatDateVN(request.request_date)}
+
+                      <div
+                        style={{
+                          marginTop: "7px",
+                          color: "#667279",
+                        }}
+                      >
+                        Ngày:{" "}
+                        {formatDateVN(
+                          request.request_date
+                        )}
                       </div>
                     </div>
 
                     <span
                       style={{
-                        background: statusBackground(request.status),
-                        color: statusColor(request.status),
+                        background: statusBackground(
+                          request.status
+                        ),
+                        color: statusColor(
+                          request.status
+                        ),
                         padding: "8px 12px",
                         borderRadius: "999px",
                         fontWeight: 700,
@@ -1098,17 +1298,35 @@ export default function EmployeePage() {
                     </span>
                   </div>
 
-                  {(request.start_time || request.end_time) && (
-                    <div style={{ marginTop: "14px" }}>
+                  {(request.start_time ||
+                    request.end_time) && (
+                    <div
+                      style={{
+                        marginTop: "14px",
+                      }}
+                    >
                       <strong>Thời gian:</strong>{" "}
-                      {formatTimeRange(request.start_time, request.end_time)}
+                      {formatTimeRange(
+                        request.start_time,
+                        request.end_time
+                      )}
                     </div>
                   )}
 
                   {request.reason && (
-                    <div style={{ marginTop: "12px" }}>
+                    <div
+                      style={{
+                        marginTop: "12px",
+                      }}
+                    >
                       <strong>Lý do:</strong>
-                      <div style={{ marginTop: "5px", lineHeight: 1.5 }}>
+
+                      <div
+                        style={{
+                          marginTop: "5px",
+                          lineHeight: 1.5,
+                        }}
+                      >
                         {request.reason}
                       </div>
                     </div>
@@ -1123,8 +1341,15 @@ export default function EmployeePage() {
                         background: "#f0f5f1",
                       }}
                     >
-                      <strong>Phản hồi Admin:</strong>
-                      <div style={{ marginTop: "5px" }}>
+                      <strong>
+                        Phản hồi Admin:
+                      </strong>
+
+                      <div
+                        style={{
+                          marginTop: "5px",
+                        }}
+                      >
                         {request.admin_note}
                       </div>
                     </div>
