@@ -1,136 +1,43 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { supabase } from "../../../lib/supabase";
+import { supabase } from "../../lib/supabase";
 
-type RequestItem = {
+type Request = {
   id: string;
-
-  employee_id: string;
-
   request_type: string;
-
   request_date: string;
-
   start_time: string | null;
-
   end_time: string | null;
-
   reason: string | null;
-
   status: string;
-
-  admin_note: string | null;
-
-  created_at: string;
-
-  employee: {
+  employees: {
     full_name: string;
   } | null;
 };
 
-function requestTypeLabel(type: string) {
-  if (type === "leave") {
-    return "Xin nghỉ";
-  }
+const requestLabels: Record<
+  string,
+  string
+> = {
+  leave: "Xin nghỉ",
+  late: "Đi muộn",
+  early_leave: "Về sớm",
+  overtime: "Tăng ca",
+  checkin_missing: "Bổ sung công",
+};
 
-  if (type === "late") {
-    return "Xin đi muộn";
-  }
-
-  if (type === "early_leave") {
-    return "Xin về sớm";
-  }
-
-  if (type === "overtime") {
-    return "Xin tăng ca";
-  }
-
-  return type;
-}
-
-function statusLabel(status: string) {
-  if (status === "pending") {
-    return "Chờ duyệt";
-  }
-
-  if (status === "approved") {
-    return "Đã duyệt";
-  }
-
-  if (status === "rejected") {
-    return "Từ chối";
-  }
-
-  return status;
-}
-
-export default function AdminRequestsPage() {
-  const router = useRouter();
-
-  const [loading, setLoading] =
-    useState(true);
-
+export default function RequestsPage() {
   const [requests, setRequests] =
-    useState<RequestItem[]>([]);
-
-  const [filter, setFilter] =
-    useState("pending");
-
-  const [notes, setNotes] =
-    useState<
-      Record<string, string>
-    >({});
-
-  useEffect(() => {
-    checkAdmin();
-  }, []);
-
-  useEffect(() => {
-    loadRequests();
-  }, [filter]);
-
-  async function checkAdmin() {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      router.replace("/login");
-
-      return;
-    }
-
-    const {
-      data: employee,
-    } = await supabase
-      .from("employees")
-      .select("*")
-      .eq(
-        "auth_user_id",
-        user.id
-      )
-      .single();
-
-    if (
-      !employee ||
-      employee.role !== "admin"
-    ) {
-      router.replace("/employee");
-
-      return;
-    }
-
-    setLoading(false);
-  }
+    useState<Request[]>([]);
 
   async function loadRequests() {
-    let query = supabase
+    const { data } = await supabase
       .from("requests")
       .select(`
         *,
-        employee:employees(
+        employees (
           full_name
         )
       `)
@@ -138,396 +45,145 @@ export default function AdminRequestsPage() {
         ascending: false,
       });
 
-    if (filter !== "all") {
-      query = query.eq(
-        "status",
-        filter
-      );
-    }
-
-    const {
-      data,
-      error,
-    } = await query;
-
-    if (error) {
-      console.error(error);
-
-      return;
-    }
-
     setRequests(
-      (data || []) as RequestItem[]
+      (data as Request[]) || []
     );
   }
 
-  async function updateRequest(
-    request: RequestItem,
-    status: "approved" | "rejected"
+  useEffect(() => {
+    loadRequests();
+  }, []);
+
+  async function updateStatus(
+    id: string,
+    status: string
   ) {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) return;
-
-    const {
-      data: admin,
-    } = await supabase
-      .from("employees")
-      .select("id")
-      .eq(
-        "auth_user_id",
-        user.id
-      )
-      .single();
-
-    if (!admin) return;
-
-    const {
-      error,
-    } = await supabase
+    const { error } = await supabase
       .from("requests")
-      .update({
-        status,
-
-        admin_note:
-          notes[request.id] || null,
-
-        reviewed_by: admin.id,
-
-        reviewed_at:
-          new Date().toISOString(),
-      })
-      .eq("id", request.id);
+      .update({ status })
+      .eq("id", id);
 
     if (error) {
-      alert(
-        `Có lỗi: ${error.message}`
-      );
-
+      alert(error.message);
       return;
     }
 
-    await loadRequests();
-  }
-
-  if (loading) {
-    return (
-      <main
-        style={{
-          minHeight: "100vh",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        Đang tải...
-      </main>
-    );
+    loadRequests();
   }
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        background: "#f5f5f3",
-        padding: "30px",
-        fontFamily:
-          "Arial, sans-serif",
-      }}
-    >
-      <div
-        style={{
-          maxWidth: "1100px",
-          margin: "0 auto",
-        }}
-      >
-        <button
-          onClick={() =>
-            router.push("/admin")
-          }
-          style={{
-            border: "none",
-            background: "#365d4b",
-            color: "#ffffff",
-            padding: "12px 18px",
-            borderRadius: "10px",
-            cursor: "pointer",
-          }}
-        >
-          ← Quay lại Admin
-        </button>
+    <div className="admin-layout">
+      <aside className="sidebar">
+        <h1>SOBA<br />STAFF</h1>
 
-        <h1>
-          Quản lý đơn từ
-        </h1>
+        <Link href="/admin">Dashboard</Link>
+        <Link href="/admin/employees">Nhân viên</Link>
+        <Link href="/admin/schedule">Lịch làm</Link>
+        <Link href="/admin/requests">Đơn từ</Link>
+        <Link href="/admin/attendance">Chấm công</Link>
+        <Link href="/admin/report">Báo cáo</Link>
+      </aside>
 
-        <div
-          style={{
-            display: "flex",
-            gap: "10px",
-            marginBottom: "25px",
-            flexWrap: "wrap",
-          }}
-        >
-          <button
-            onClick={() =>
-              setFilter("pending")
-            }
-          >
-            Chờ duyệt
-          </button>
+      <main className="admin-main">
+        <h1>Đơn từ</h1>
 
-          <button
-            onClick={() =>
-              setFilter("approved")
-            }
-          >
-            Đã duyệt
-          </button>
+        <section className="list-card">
+          {requests.map((request) => (
+            <div
+              key={request.id}
+              className="request-row"
+            >
+              <div>
+                <strong>
+                  {request.employees?.full_name}
+                </strong>
 
-          <button
-            onClick={() =>
-              setFilter("rejected")
-            }
-          >
-            Từ chối
-          </button>
+                <p>
+                  {
+                    requestLabels[
+                      request.request_type
+                    ]
+                  }
+                </p>
 
-          <button
-            onClick={() =>
-              setFilter("all")
-            }
-          >
-            Tất cả
-          </button>
-        </div>
+                <p>
+                  Ngày: {request.request_date}
+                </p>
 
-        <div
-          style={{
-            display: "grid",
-            gap: "18px",
-          }}
-        >
-          {requests.length === 0 && (
-            <p>
-              Không có đơn nào.
-            </p>
-          )}
+                {request.start_time && (
+                  <p>
+                    Bắt đầu:{" "}
+                    {request.start_time.slice(
+                      0,
+                      5
+                    )}
+                  </p>
+                )}
 
-          {requests.map(
-            (request) => (
-              <div
-                key={request.id}
-                style={{
-                  background:
-                    "#ffffff",
-                  borderRadius:
-                    "18px",
-                  padding: "24px",
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent:
-                      "space-between",
-                    gap: "20px",
-                    flexWrap: "wrap",
-                  }}
+                {request.end_time && (
+                  <p>
+                    Kết thúc:{" "}
+                    {request.end_time.slice(
+                      0,
+                      5
+                    )}
+                  </p>
+                )}
+
+                <p>
+                  Lý do:{" "}
+                  {request.reason || "Không có"}
+                </p>
+              </div>
+
+              <div>
+                <span
+                  className={`status ${request.status}`}
                 >
-                  <div>
-                    <h3>
-                      {
-                        request.employee
-                          ?.full_name
-                      }
-                    </h3>
-
-                    <p>
-                      <strong>
-                        Loại đơn:
-                      </strong>{" "}
-                      {requestTypeLabel(
-                        request.request_type
-                      )}
-                    </p>
-
-                    <p>
-                      <strong>
-                        Ngày:
-                      </strong>{" "}
-                      {
-                        request.request_date
-                      }
-                    </p>
-
-                    {request.start_time && (
-                      <p>
-                        <strong>
-                          Bắt đầu:
-                        </strong>{" "}
-                        {request.start_time.slice(
-                          0,
-                          5
-                        )}
-                      </p>
-                    )}
-
-                    {request.end_time && (
-                      <p>
-                        <strong>
-                          Kết thúc:
-                        </strong>{" "}
-                        {request.end_time.slice(
-                          0,
-                          5
-                        )}
-                      </p>
-                    )}
-
-                    <p>
-                      <strong>
-                        Lý do:
-                      </strong>{" "}
-                      {request.reason ||
-                        "Không có"}
-                    </p>
-
-                    <p>
-                      <strong>
-                        Trạng thái:
-                      </strong>{" "}
-                      {statusLabel(
-                        request.status
-                      )}
-                    </p>
-                  </div>
-                </div>
+                  {request.status === "pending"
+                    ? "Chờ duyệt"
+                    : request.status ===
+                      "approved"
+                    ? "Đã duyệt"
+                    : "Từ chối"}
+                </span>
 
                 {request.status ===
                   "pending" && (
-                  <div
-                    style={{
-                      marginTop:
-                        "20px",
-                    }}
-                  >
-                    <textarea
-                      placeholder="Ghi chú cho nhân viên..."
-                      value={
-                        notes[request.id] ||
-                        ""
+                  <div className="action-buttons">
+                    <button
+                      onClick={() =>
+                        updateStatus(
+                          request.id,
+                          "approved"
+                        )
                       }
-                      onChange={(e) =>
-                        setNotes({
-                          ...notes,
-
-                          [request.id]:
-                            e.target.value,
-                        })
-                      }
-                      rows={3}
-                      style={{
-                        width: "100%",
-                        padding: "12px",
-                        borderRadius:
-                          "10px",
-                        border:
-                          "1px solid #ddd",
-                      }}
-                    />
-
-                    <div
-                      style={{
-                        display: "flex",
-                        gap: "12px",
-                        marginTop:
-                          "12px",
-                      }}
                     >
-                      <button
-                        onClick={() =>
-                          updateRequest(
-                            request,
-                            "approved"
-                          )
-                        }
-                        style={{
-                          background:
-                            "#2f7d4c",
-                          color:
-                            "#ffffff",
-                          border: "none",
-                          padding:
-                            "12px 20px",
-                          borderRadius:
-                            "10px",
-                          cursor:
-                            "pointer",
-                        }}
-                      >
-                        Duyệt
-                      </button>
+                      Duyệt
+                    </button>
 
-                      <button
-                        onClick={() =>
-                          updateRequest(
-                            request,
-                            "rejected"
-                          )
-                        }
-                        style={{
-                          background:
-                            "#c0392b",
-                          color:
-                            "#ffffff",
-                          border: "none",
-                          padding:
-                            "12px 20px",
-                          borderRadius:
-                            "10px",
-                          cursor:
-                            "pointer",
-                        }}
-                      >
-                        Từ chối
-                      </button>
-                    </div>
+                    <button
+                      className="danger"
+                      onClick={() =>
+                        updateStatus(
+                          request.id,
+                          "rejected"
+                        )
+                      }
+                    >
+                      Từ chối
+                    </button>
                   </div>
                 )}
-
-                {request.status !==
-                  "pending" &&
-                  request.admin_note && (
-                    <div
-                      style={{
-                        marginTop:
-                          "15px",
-                        background:
-                          "#f4f4f4",
-                        padding: "14px",
-                        borderRadius:
-                          "10px",
-                      }}
-                    >
-                      <strong>
-                        Phản hồi:
-                      </strong>
-
-                      <br />
-
-                      {
-                        request.admin_note
-                      }
-                    </div>
-                  )}
               </div>
-            )
+            </div>
+          ))}
+
+          {requests.length === 0 && (
+            <p>Chưa có yêu cầu nào.</p>
           )}
-        </div>
-      </div>
-    </main>
+        </section>
+      </main>
+    </div>
   );
 }
