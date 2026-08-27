@@ -1,93 +1,98 @@
 "use client";
 
 import { useState } from "react";
-import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
 
 export default function LoginPage() {
   const router = useRouter();
 
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [username, setUsername] =
+    useState("");
+
+  const [password, setPassword] =
+    useState("");
+
+  const [message, setMessage] =
+    useState("");
 
   async function handleLogin() {
-    if (!email || !password) {
-      alert("Vui lòng nhập email và mật khẩu.");
+    setMessage("");
+
+    if (!username.trim() || !password.trim()) {
+      setMessage(
+        "Vui lòng nhập tài khoản và mật khẩu."
+      );
       return;
     }
 
-    setLoading(true);
-
-    const { data, error } =
-      await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-    if (error || !data.user) {
-      alert(error?.message || "Không thể đăng nhập.");
-      setLoading(false);
-      return;
-    }
-
-    const { data: employee } = await supabase
+    const { data, error } = await supabase
       .from("employees")
       .select("*")
-      .eq("id", data.user.id)
-      .single();
+      .eq("username", username.trim())
+      .eq("password", password.trim())
+      .maybeSingle();
 
-    if (!employee) {
-      alert("Tài khoản chưa có thông tin nhân viên.");
-      await supabase.auth.signOut();
-      setLoading(false);
+    if (error) {
+      setMessage(error.message);
       return;
     }
 
-    if (employee.role === "admin") {
+    if (!data) {
+      setMessage(
+        "Tài khoản hoặc mật khẩu không đúng."
+      );
+      return;
+    }
+
+    localStorage.setItem(
+      "soba_staff_user",
+      JSON.stringify(data)
+    );
+
+    if (data.role === "admin") {
       router.push("/admin");
     } else {
       router.push("/employee");
     }
-
-    setLoading(false);
   }
 
   return (
     <main className="login-page">
       <div className="login-card">
-
         <h1>SOBA STAFF</h1>
 
-        <p className="subtitle">
-          Đăng nhập để chấm công và xem lịch làm việc
+        <p>
+          Hệ thống quản lý nhân viên
         </p>
 
-        <label>Email</label>
-
         <input
-          type="email"
-          placeholder="Nhập email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          type="text"
+          placeholder="Tài khoản"
+          value={username}
+          onChange={(e) =>
+            setUsername(e.target.value)
+          }
         />
-
-        <label>Mật khẩu</label>
 
         <input
           type="password"
-          placeholder="Nhập mật khẩu"
+          placeholder="Mật khẩu"
           value={password}
-          onChange={(e) => setPassword(e.target.value)}
+          onChange={(e) =>
+            setPassword(e.target.value)
+          }
         />
 
-        <button
-          onClick={handleLogin}
-          disabled={loading}
-        >
-          {loading ? "Đang đăng nhập..." : "Đăng nhập"}
+        <button onClick={handleLogin}>
+          Đăng nhập
         </button>
 
+        {message && (
+          <div className="error-message">
+            {message}
+          </div>
+        )}
       </div>
     </main>
   );
