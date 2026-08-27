@@ -11,12 +11,13 @@ type Attendance = {
   check_out: string | null;
   employees: {
     full_name: string;
-  } | null;
+  } | {
+    full_name: string;
+  }[] | null;
 };
 
 export default function AttendancePage() {
-  const [attendance, setAttendance] =
-    useState<Attendance[]>([]);
+  const [attendance, setAttendance] = useState<Attendance[]>([]);
 
   async function loadAttendance() {
     const { data } = await supabase
@@ -34,9 +35,7 @@ export default function AttendancePage() {
         ascending: false,
       });
 
-    setAttendance(
-      (data as Attendance[]) || []
-    );
+    setAttendance((data as unknown as Attendance[]) || []);
   }
 
   useEffect(() => {
@@ -60,51 +59,39 @@ export default function AttendancePage() {
         <h1>Chấm công</h1>
 
         <section className="list-card">
-          {attendance.map((item) => (
-            <div
-              className="attendance-row"
-              key={item.id}
-            >
-              <strong>
-                {item.employees?.full_name ||
-                  "Không xác định"}
-              </strong>
+          {attendance.map((item) => {
+            const employeeName = Array.isArray(item.employees)
+              ? item.employees[0]?.full_name
+              : item.employees?.full_name;
 
-              <span>
-                Ngày: {item.work_date}
-              </span>
+            return (
+              <div className="attendance-row" key={item.id}>
+                <strong>{employeeName || "Không xác định"}</strong>
 
-              <span>
-                Check-in:{" "}
-                {item.check_in
-                  ? new Date(
-                      item.check_in
-                    ).toLocaleTimeString(
-                      "vi-VN",
-                      {
+                <span>Ngày: {item.work_date}</span>
+
+                <span>
+                  Check-in:{" "}
+                  {item.check_in
+                    ? new Date(item.check_in).toLocaleTimeString("vi-VN", {
                         hour: "2-digit",
                         minute: "2-digit",
-                      }
-                    )
-                  : "--:--"}
-              </span>
+                      })
+                    : "--:--"}
+                </span>
 
-              <span>
-                Check-out:{" "}
-                {item.check_out
-                  ? new Date(
-                      item.check_out
-                    ).toLocaleTimeString(
-                      "vi-VN",
-                      {
+                <span>
+                  Check-out:{" "}
+                  {item.check_out
+                    ? new Date(item.check_out).toLocaleTimeString("vi-VN", {
                         hour: "2-digit",
                         minute: "2-digit",
-                      }
-                    )
-                  : "--:--"}
-              </span>
-            </div>
-          ))}
+                      })
+                    : "--:--"}
+                </span>
+              </div>
+            );
+          })}
 
           {attendance.length === 0 && (
             <p>Chưa có dữ liệu chấm công.</p>
