@@ -1,117 +1,139 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 export default function LoginPage() {
   const router = useRouter();
-
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function handleLogin(e: FormEvent<HTMLFormElement>) {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    setMessage("");
-
-    if (!email.trim() || !password.trim()) {
-      setMessage("Vui lòng nhập đầy đủ email và mật khẩu.");
-      return;
-    }
-
+    setError("");
     setLoading(true);
 
     try {
-      const { data, error } = await supabase
-        .from("employees")
-        .select("*")
-        .eq("email", email.trim())
-        .eq("password", password.trim())
-        .maybeSingle();
+      // 1. Đăng nhập qua Supabase Auth
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-      if (error) {
-        setMessage(error.message);
+      if (authError) {
+        setError("Email hoặc mật khẩu không chính xác!");
+        setLoading(false);
         return;
       }
 
-      if (!data) {
-        setMessage("Email hoặc mật khẩu không đúng.");
-        return;
+      if (data.session) {
+        // 2. Chuyển hướng sang trang chính sau khi đăng nhập thành công
+        router.push("/");
       }
-
-      // Lưu thông tin đăng nhập
-      localStorage.setItem("employee_id", data.id);
-      localStorage.setItem("employee_name", data.full_name || "");
-      localStorage.setItem("employee_role", data.role || "");
-      localStorage.setItem(
-        "employment_type",
-        data.employment_type || ""
-      );
-
-      // Admin
-      if (data.role === "admin") {
-        router.push("/admin");
-        return;
-      }
-
-      // Nhân viên
-      router.push("/employee");
-    } catch (error) {
-      setMessage(
-        error instanceof Error
-          ? error.message
-          : "Có lỗi xảy ra khi đăng nhập."
-      );
+    } catch (err: any) {
+      setError("Đã xảy ra lỗi khi đăng nhập. Vui lòng thử lại!");
     } finally {
       setLoading(false);
     }
-  }
+  };
 
   return (
-    <main className="login-page">
-      <div className="login-card">
-        <h1>SOBA STAFF</h1>
+    <div style={containerStyle}>
+      <div style={cardStyle}>
+        <h1 style={titleStyle}>SOBA STAFF</h1>
+        <p style={subtitleStyle}>Hệ thống quản lý nhân viên</p>
 
-        <p className="login-subtitle">
-          Hệ thống quản lý nhân viên
-        </p>
-
-        <form onSubmit={handleLogin}>
+        <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
           <input
             type="email"
-            placeholder="Email"
+            placeholder="Nhập email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            disabled={loading}
-            autoComplete="email"
+            required
+            style={inputStyle}
           />
-
           <input
             type="password"
-            placeholder="Mật khẩu"
+            placeholder="Nhập mật khẩu"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            disabled={loading}
-            autoComplete="current-password"
+            required
+            style={inputStyle}
           />
 
-          <button
-            type="submit"
-            disabled={loading}
-          >
-            {loading ? "Đang đăng nhập..." : "Đăng nhập"}
+          <button type="submit" disabled={loading} style={buttonStyle}>
+            {loading ? "Đang xử lý..." : "Đăng nhập"}
           </button>
         </form>
 
-        {message && (
-          <div className="login-message">
-            {message}
-          </div>
-        )}
+        {error && <p style={errorStyle}>{error}</p>}
       </div>
-    </main>
+    </div>
   );
 }
+
+// Inline Style giao diện SOBA
+const containerStyle = {
+  display: "flex",
+  justifyContent: "center",
+  alignItems: "center",
+  minHeight: "100vh",
+  background: "#f4f4f0",
+  fontFamily: "system-ui, -apple-system, sans-serif",
+};
+
+const cardStyle = {
+  background: "#ffffff",
+  padding: "32px",
+  borderRadius: "16px",
+  boxShadow: "0 4px 20px rgba(0,0,0,0.05)",
+  width: "100%",
+  maxWidth: "360px",
+  textAlign: "center" as const,
+};
+
+const titleStyle = {
+  margin: "0 0 4px 0",
+  fontSize: "24px",
+  fontWeight: "bold" as const,
+  color: "#1e293b",
+};
+
+const subtitleStyle = {
+  margin: "0 0 24px 0",
+  fontSize: "13px",
+  color: "#64748b",
+};
+
+const inputStyle = {
+  width: "100%",
+  padding: "12px 14px",
+  borderRadius: "8px",
+  border: "1px solid #cbd5e1",
+  fontSize: "14px",
+  outline: "none",
+  boxSizing: "border-box" as const,
+};
+
+const buttonStyle = {
+  width: "100%",
+  padding: "12px",
+  background: "#2d5240",
+  color: "#ffffff",
+  border: "none",
+  borderRadius: "8px",
+  fontSize: "14px",
+  fontWeight: "bold" as const,
+  cursor: "pointer",
+  marginTop: "8px",
+};
+
+const errorStyle = {
+  color: "#dc2626",
+  fontSize: "13px",
+  marginTop: "12px",
+  marginBottom: 0,
+};
