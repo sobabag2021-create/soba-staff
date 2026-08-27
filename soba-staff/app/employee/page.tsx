@@ -38,25 +38,23 @@ export default function EmployeePage() {
   const [reason, setReason] = useState("");
   const [myRequests, setMyRequests] = useState<RequestItem[]>([]);
 
-  // State Lịch làm việc
-  const [scheduleList, setScheduleList] = useState<Shift[]>([
-    { dayName: "Thứ 2", dateStr: "24/8/2026", time: "07:30 - 17:30" },
-    { dayName: "Thứ 3", dateStr: "25/8/2026", time: "07:00 - 17:00" },
-    { dayName: "Thứ 4", dateStr: "26/8/2026", time: "Nghỉ" },
-    {
-      dayName: "Thứ 5",
-      dateStr: "27/8/2026",
-      time: "06:30 - 16:30",
-      isToday: true,
-    },
-    { dayName: "Thứ 6", dateStr: "28/8/2026", time: "07:00 - 17:00" },
-    { dayName: "Thứ 7", dateStr: "29/8/2026", time: "08:00 - 18:00" },
-    { dayName: "Chủ nhật", dateStr: "30/8/2026", time: "06:30 - 16:30" },
-  ]);
+  // State quản lý ngày bắt đầu tuần (Thứ 2)
+  const [currentWeekStart, setCurrentWeekStart] = useState<Date>(() => {
+    const d = new Date();
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    return new Date(d.setDate(diff));
+  });
+
+  const [scheduleList, setScheduleList] = useState<Shift[]>([]);
 
   useEffect(() => {
     loadEmployeeData();
   }, []);
+
+  useEffect(() => {
+    fetchScheduleForWeek(currentWeekStart);
+  }, [currentWeekStart]);
 
   async function loadEmployeeData() {
     const {
@@ -78,6 +76,82 @@ export default function EmployeePage() {
       setEmployeeName(emp.full_name || "Nhân viên");
       setEmployeeType(emp.type || "full_time");
     }
+  }
+
+  // Chuyển sang tuần trước
+  const handlePrevWeek = () => {
+    const prev = new Date(currentWeekStart);
+    prev.setDate(prev.getDate() - 7);
+    setCurrentWeekStart(prev);
+  };
+
+  // Chuyển sang tuần sau
+  const handleNextWeek = () => {
+    const next = new Date(currentWeekStart);
+    next.setDate(next.getDate() + 7);
+    setCurrentWeekStart(next);
+  };
+
+  // Hiển thị dải ngày Tuần
+  const getWeekRangeLabel = () => {
+    const end = new Date(currentWeekStart);
+    end.setDate(end.getDate() + 6);
+
+    const format = (d: Date) =>
+      `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
+    return `${format(currentWeekStart)} - ${format(end)}`;
+  };
+
+  // Tải dữ liệu lịch từ Supabase theo tuần
+  async function fetchScheduleForWeek(startDate: Date) {
+    const endDate = new Date(startDate);
+    endDate.setDate(endDate.getDate() + 6);
+
+    const startStr = startDate.toISOString().split("T")[0];
+    const endStr = endDate.toISOString().split("T")[0];
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const { data: shifts } = await supabase
+      .from("schedules")
+      .select("*")
+      .eq("user_id", user.id)
+      .gte("work_date", startStr)
+      .lte("work_date", endStr);
+
+    const daysOfWeek = [
+      "Thứ 2",
+      "Thứ 3",
+      "Thứ 4",
+      "Thứ 5",
+      "Thứ 6",
+      "Thứ 7",
+      "Chủ nhật",
+    ];
+    const todayStr = new Date().toISOString().split("T")[0];
+
+    const days: Shift[] = daysOfWeek.map((dayName, index) => {
+      const d = new Date(startDate);
+      d.setDate(d.getDate() + index);
+      const dateIso = d.toISOString().split("T")[0];
+      const dateFormatted = `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
+
+      const matchedShift = shifts?.find((s: any) => s.work_date === dateIso);
+
+      return {
+        dayName,
+        dateStr: dateFormatted,
+        time: matchedShift
+          ? `${matchedShift.start_time} - ${matchedShift.end_time}`
+          : "Nghỉ",
+        isToday: dateIso === todayStr,
+      };
+    });
+
+    setScheduleList(days);
   }
 
   async function handleLogout() {
@@ -130,7 +204,7 @@ export default function EmployeePage() {
       }}
     >
       <div style={{ maxWidth: "800px", margin: "0 auto", padding: "0 16px" }}>
-        {/* Header trên cùng */}
+        {/* Header */}
         <div
           style={{
             display: "flex",
@@ -170,7 +244,7 @@ export default function EmployeePage() {
           </button>
         </div>
 
-        {/* Card thông tin nhân viên */}
+        {/* Thông tin nhân viên */}
         <div
           style={{
             background: "#2d5240",
@@ -193,7 +267,7 @@ export default function EmployeePage() {
           <div style={{ fontSize: "14px", opacity: 0.8 }}>{employeeType}</div>
         </div>
 
-        {/* Khối Chấm công hôm nay */}
+        {/* Chấm công hôm nay */}
         <div
           style={{
             background: "#fff",
@@ -316,7 +390,7 @@ export default function EmployeePage() {
           </div>
         </div>
 
-        {/* Khối Lịch làm việc */}
+        {/* Lịch làm việc */}
         <div
           style={{
             background: "#fff",
@@ -347,24 +421,30 @@ export default function EmployeePage() {
               }}
             >
               <button
+                onClick={handlePrevWeek}
                 style={{
                   border: "none",
                   background: "#e8ece9",
+                  color: "#2d5240",
                   padding: "6px 12px",
                   borderRadius: "6px",
                   cursor: "pointer",
+                  fontWeight: "bold",
                 }}
               >
                 ← Tuần trước
               </button>
-              <span>24/8/2026 - 30/8/2026</span>
+              <span>{getWeekRangeLabel()}</span>
               <button
+                onClick={handleNextWeek}
                 style={{
                   border: "none",
                   background: "#e8ece9",
+                  color: "#2d5240",
                   padding: "6px 12px",
                   borderRadius: "6px",
                   cursor: "pointer",
+                  fontWeight: "bold",
                 }}
               >
                 Tuần sau →
@@ -405,7 +485,7 @@ export default function EmployeePage() {
                 </div>
                 <div
                   style={{
-                    background: item.time === "Nghỉ" ? "#transparent" : "#eef2ef",
+                    background: item.time === "Nghỉ" ? "transparent" : "#eef2ef",
                     color: item.time === "Nghỉ" ? "#888" : "#1e1e1e",
                     padding: "8px 12px",
                     borderRadius: "8px",
@@ -421,7 +501,7 @@ export default function EmployeePage() {
           </div>
         </div>
 
-        {/* Khối Gửi yêu cầu */}
+        {/* Gửi yêu cầu */}
         <div
           style={{
             background: "#fff",
@@ -442,7 +522,6 @@ export default function EmployeePage() {
             Gửi yêu cầu
           </h2>
 
-          {/* Các nút tab loại yêu cầu */}
           <div
             style={{
               display: "flex",
@@ -479,7 +558,6 @@ export default function EmployeePage() {
             ))}
           </div>
 
-          {/* Ô chọn ngày */}
           <input
             type="date"
             value={requestDate}
@@ -495,7 +573,6 @@ export default function EmployeePage() {
             }}
           />
 
-          {/* Ô nhập lý do */}
           <textarea
             placeholder="Nhập lý do..."
             rows={4}
@@ -513,7 +590,6 @@ export default function EmployeePage() {
             }}
           />
 
-          {/* Nút Gửi */}
           <button
             onClick={handleSubmitRequest}
             style={{
@@ -532,7 +608,7 @@ export default function EmployeePage() {
           </button>
         </div>
 
-        {/* Khối Yêu cầu của tôi */}
+        {/* Yêu cầu của tôi */}
         <div
           style={{
             background: "#fff",
@@ -555,7 +631,7 @@ export default function EmployeePage() {
           <div
             style={{ display: "flex", flexDirection: "column", gap: "12px" }}
           >
-            {/* Dữ liệu mẫu tĩnh theo mẫu ảnh */}
+            {/* Dữ liệu mẫu tĩnh */}
             <div
               style={{
                 border: "1px solid #eaeaea",
@@ -647,7 +723,7 @@ export default function EmployeePage() {
               </span>
             </div>
 
-            {/* Render các yêu cầu mới vừa gửi */}
+            {/* Các yêu cầu mới */}
             {myRequests.map((req) => (
               <div
                 key={req.id}
