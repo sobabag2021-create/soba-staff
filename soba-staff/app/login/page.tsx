@@ -1,139 +1,150 @@
 "use client";
 
-import { useState } from "react";
+import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 export default function LoginPage() {
   const router = useRouter();
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const handleLogin = async (e: React.FormEvent) => {
+  async function handleLogin(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setError("");
+
+    setMessage("");
+
+    if (!email.trim() || !password.trim()) {
+      setMessage("Vui lòng nhập đầy đủ email và mật khẩu.");
+      return;
+    }
+
     setLoading(true);
 
     try {
-      // 1. Đăng nhập qua Supabase Auth
-      const { data, error: authError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      // Đăng nhập bằng Supabase Authentication
+      const { data: authData, error: authError } =
+        await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
 
       if (authError) {
-        setError("Email hoặc mật khẩu không chính xác!");
-        setLoading(false);
+        setMessage(authError.message);
         return;
       }
 
-      if (data.session) {
-        // 2. Chuyển hướng sang trang chính sau khi đăng nhập thành công
-        router.push("/");
+      if (!authData.user) {
+        setMessage("Không tìm thấy tài khoản đăng nhập.");
+        return;
       }
-    } catch (err: any) {
-      setError("Đã xảy ra lỗi khi đăng nhập. Vui lòng thử lại!");
+
+      // Lấy thông tin nhân viên bằng auth_user_id
+      const { data: employee, error: employeeError } =
+        await supabase
+          .from("employees")
+          .select("*")
+          .eq("auth_user_id", authData.user.id)
+          .eq("active", true)
+          .maybeSingle();
+
+      if (employeeError) {
+        setMessage(employeeError.message);
+        return;
+      }
+
+      if (!employee) {
+        setMessage(
+          "Tài khoản đã đăng nhập nhưng chưa được liên kết với nhân viên."
+        );
+        return;
+      }
+
+      // Lưu thông tin đăng nhập
+      localStorage.setItem("employee_id", employee.id);
+      localStorage.setItem(
+        "auth_user_id",
+        authData.user.id
+      );
+      localStorage.setItem(
+        "employee_name",
+        employee.full_name || ""
+      );
+      localStorage.setItem(
+        "employee_role",
+        employee.role || "employee"
+      );
+      localStorage.setItem(
+        "employment_type",
+        employee.employment_type || ""
+      );
+
+      // Chuyển trang
+      if (employee.role === "admin") {
+        router.push("/admin");
+      } else {
+        router.push("/employee");
+      }
+    } catch (error) {
+      console.error(error);
+
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Có lỗi xảy ra khi đăng nhập."
+      );
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   return (
-    <div style={containerStyle}>
-      <div style={cardStyle}>
-        <h1 style={titleStyle}>SOBA STAFF</h1>
-        <p style={subtitleStyle}>Hệ thống quản lý nhân viên</p>
+    <main className="login-page">
+      <div className="login-card">
+        <h1>SOBA STAFF</h1>
 
-        <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        <p className="login-subtitle">
+          Hệ thống quản lý nhân viên
+        </p>
+
+        <form onSubmit={handleLogin}>
           <input
             type="email"
             placeholder="Nhập email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            required
-            style={inputStyle}
+            disabled={loading}
+            autoComplete="email"
           />
+
           <input
             type="password"
             placeholder="Nhập mật khẩu"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            required
-            style={inputStyle}
+            disabled={loading}
+            autoComplete="current-password"
           />
 
-          <button type="submit" disabled={loading} style={buttonStyle}>
-            {loading ? "Đang xử lý..." : "Đăng nhập"}
+          <button
+            type="submit"
+            disabled={loading}
+          >
+            {loading
+              ? "Đang đăng nhập..."
+              : "Đăng nhập"}
           </button>
         </form>
 
-        {error && <p style={errorStyle}>{error}</p>}
+        {message && (
+          <div className="login-message">
+            {message}
+          </div>
+        )}
       </div>
-    </div>
+    </main>
   );
 }
-
-// Inline Style giao diện SOBA
-const containerStyle = {
-  display: "flex",
-  justifyContent: "center",
-  alignItems: "center",
-  minHeight: "100vh",
-  background: "#f4f4f0",
-  fontFamily: "system-ui, -apple-system, sans-serif",
-};
-
-const cardStyle = {
-  background: "#ffffff",
-  padding: "32px",
-  borderRadius: "16px",
-  boxShadow: "0 4px 20px rgba(0,0,0,0.05)",
-  width: "100%",
-  maxWidth: "360px",
-  textAlign: "center" as const,
-};
-
-const titleStyle = {
-  margin: "0 0 4px 0",
-  fontSize: "24px",
-  fontWeight: "bold" as const,
-  color: "#1e293b",
-};
-
-const subtitleStyle = {
-  margin: "0 0 24px 0",
-  fontSize: "13px",
-  color: "#64748b",
-};
-
-const inputStyle = {
-  width: "100%",
-  padding: "12px 14px",
-  borderRadius: "8px",
-  border: "1px solid #cbd5e1",
-  fontSize: "14px",
-  outline: "none",
-  boxSizing: "border-box" as const,
-};
-
-const buttonStyle = {
-  width: "100%",
-  padding: "12px",
-  background: "#2d5240",
-  color: "#ffffff",
-  border: "none",
-  borderRadius: "8px",
-  fontSize: "14px",
-  fontWeight: "bold" as const,
-  cursor: "pointer",
-  marginTop: "8px",
-};
-
-const errorStyle = {
-  color: "#dc2626",
-  fontSize: "13px",
-  marginTop: "12px",
-  marginBottom: 0,
-};
