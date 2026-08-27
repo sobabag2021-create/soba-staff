@@ -1,19 +1,3 @@
-import type { Metadata } from "next";
 import "./globals.css";
-
-export const metadata: Metadata = {
-  title: "SOBA STAFF",
-  description: "Quản lý nhân sự SOBA STAFF",
-};
-
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
-  return (
-    <html lang="vi">
-      <body>{children}</body>
-    </html>
-  );
-}
+export const metadata={title:"SOBA STAFF"};
+export default function Layout({children}:{children:React.ReactNode}){return <html lang="vi"><body>{children}</body></html>}
