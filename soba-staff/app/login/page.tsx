@@ -1,35 +1,6 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
-
-export default function LoginPage() {
-  const router = useRouter();
-
-  const [username, setUsername] =
-    useState("");
-
-  const [password, setPassword] =
-    useState("");
-
-  const [message, setMessage] =
-    useState("");
-
-  async function handleLogin() {
-    setMessage("");
-
-    if (!username.trim() || !password.trim()) {
-      setMessage(
-        "Vui lòng nhập tài khoản và mật khẩu."
-      );
-      return;
-    }
-
-    const { data, error } = await supabase
-      "use client";
-
-import { useState } from "react";
+import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
@@ -41,20 +12,20 @@ export default function LoginPage() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function handleLogin(e: React.FormEvent) {
+  async function handleLogin(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
     setMessage("");
 
     if (!email.trim() || !password.trim()) {
-      setMessage("Vui lòng nhập email và mật khẩu.");
+      setMessage("Vui lòng nhập đầy đủ email và mật khẩu.");
       return;
     }
 
     setLoading(true);
 
     try {
-      const { data: employee, error } = await supabase
+      const { data, error } = await supabase
         .from("employees")
         .select("*")
         .eq("email", email.trim())
@@ -63,32 +34,40 @@ export default function LoginPage() {
 
       if (error) {
         setMessage(error.message);
-        setLoading(false);
         return;
       }
 
-      if (!employee) {
+      if (!data) {
         setMessage("Email hoặc mật khẩu không đúng.");
-        setLoading(false);
         return;
       }
 
+      // Lưu thông tin đăng nhập
+      localStorage.setItem("employee_id", data.id);
+      localStorage.setItem("employee_name", data.full_name || "");
+      localStorage.setItem("employee_role", data.role || "");
       localStorage.setItem(
-        "soba_staff_user",
-        JSON.stringify(employee)
+        "employment_type",
+        data.employment_type || ""
       );
 
-      if (employee.role === "admin") {
+      // Admin
+      if (data.role === "admin") {
         router.push("/admin");
-      } else {
-        router.push("/employee");
+        return;
       }
-    } catch (error) {
-      console.error(error);
-      setMessage("Có lỗi xảy ra khi đăng nhập.");
-    }
 
-    setLoading(false);
+      // Nhân viên
+      router.push("/employee");
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Có lỗi xảy ra khi đăng nhập."
+      );
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -96,104 +75,39 @@ export default function LoginPage() {
       <div className="login-card">
         <h1>SOBA STAFF</h1>
 
-        <p>Hệ thống quản lý nhân viên</p>
+        <p className="login-subtitle">
+          Hệ thống quản lý nhân viên
+        </p>
 
         <form onSubmit={handleLogin}>
           <input
             type="email"
-            placeholder="Nhập email"
+            placeholder="Email"
             value={email}
-            onChange={(e) =>
-              setEmail(e.target.value)
-            }
+            onChange={(e) => setEmail(e.target.value)}
+            disabled={loading}
+            autoComplete="email"
           />
 
           <input
             type="password"
-            placeholder="Nhập mật khẩu"
+            placeholder="Mật khẩu"
             value={password}
-            onChange={(e) =>
-              setPassword(e.target.value)
-            }
+            onChange={(e) => setPassword(e.target.value)}
+            disabled={loading}
+            autoComplete="current-password"
           />
 
           <button
             type="submit"
             disabled={loading}
           >
-            {loading
-              ? "Đang đăng nhập..."
-              : "Đăng nhập"}
+            {loading ? "Đang đăng nhập..." : "Đăng nhập"}
           </button>
         </form>
 
         {message && (
           <div className="login-message">
-            {message}
-          </div>
-        )}
-      </div>
-    </main>
-  );
-}
-
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-
-    if (!data) {
-      setMessage(
-        "Tài khoản hoặc mật khẩu không đúng."
-      );
-      return;
-    }
-
-    localStorage.setItem(
-      "soba_staff_user",
-      JSON.stringify(data)
-    );
-
-    if (data.role === "admin") {
-      router.push("/admin");
-    } else {
-      router.push("/employee");
-    }
-  }
-
-  return (
-    <main className="login-page">
-      <div className="login-card">
-        <h1>SOBA STAFF</h1>
-
-        <p>
-          Hệ thống quản lý nhân viên
-        </p>
-
-        <input
-          type="text"
-          placeholder="Tài khoản"
-          value={username}
-          onChange={(e) =>
-            setUsername(e.target.value)
-          }
-        />
-
-        <input
-          type="password"
-          placeholder="Mật khẩu"
-          value={password}
-          onChange={(e) =>
-            setPassword(e.target.value)
-          }
-        />
-
-        <button onClick={handleLogin}>
-          Đăng nhập
-        </button>
-
-        {message && (
-          <div className="error-message">
             {message}
           </div>
         )}
