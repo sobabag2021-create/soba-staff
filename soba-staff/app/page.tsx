@@ -1,1605 +1,336 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 type Employee = {
   id: string;
+  user_id: string;
   full_name: string;
-  role: string;
-  active: boolean;
-  employment_type?: string | null;
+  type: "full_time" | "part_time";
 };
 
-type Attendance = {
-  id: string;
-  employee_id: string;
+type ScheduleRecord = {
+  id?: string;
+  user_id: string;
   work_date: string;
-  check_in: string | null;
-  check_out: string | null;
-  late_minutes: number | null;
-  makeup_minutes: number | null;
-  penalty_amount: number | null;
-  status: string | null;
+  start_time: string;
+  end_time: string;
 };
 
-type Schedule = {
-  id: string;
-  employee_id: string;
-  work_date: string;
-  start_time: string | null;
-  end_time: string | null;
-  note: string | null;
+// 1. Tự động sinh danh sách mốc ca Full-time từ 04:30 đến 11:00 (+10 tiếng)
+const generateFullTimeShifts = () => {
+  const shifts: string[] = ["Chọn ca", "Nghỉ"];
+  let startMinutes = 4 * 60 + 30; // 04:30
+  const endLimitMinutes = 11 * 60; // 11:00
+
+  while (startMinutes <= endLimitMinutes) {
+    const startH = Math.floor(startMinutes / 60);
+    const startM = startMinutes % 60;
+
+    const endMinutes = startMinutes + 10 * 60; // Cộng thêm 10 tiếng
+    const endH = Math.floor(endMinutes / 60);
+    const endM = endMinutes % 60;
+
+    const formatTime = (h: number, m: number) =>
+      `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+
+    shifts.push(`${formatTime(startH, startM)} - ${formatTime(endH, endM)}`);
+    startMinutes += 30; // Mỗi ca cách nhau 30 phút
+  }
+
+  return shifts;
 };
 
-type RequestItem = {
-  id: string;
-  employee_id: string;
-  request_type: string;
-  request_date: string;
-  start_time: string | null;
-  end_time: string | null;
-  reason: string | null;
-  status: string;
-  admin_note: string | null;
-  created_at: string;
-};
+const FULL_TIME_SHIFTS = generateFullTimeShifts();
 
-type RequestType =
-  | "late"
-  | "early_leave"
-  | "overtime"
-  | "leave";
-
-function getVietnamDateString(date = new Date()) {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Ho_Chi_Minh",
-  }).format(date);
-}
-
-function getVietnamDate(date = new Date()) {
-  const vietnamString = date.toLocaleString("en-US", {
-    timeZone: "Asia/Ho_Chi_Minh",
-  });
-
-  return new Date(vietnamString);
-}
-
-function formatTime(value: string | null) {
-  if (!value) return "--:--";
-
-  if (/^\d{2}:\d{2}/.test(value)) {
-    return value.slice(0, 5);
-  }
-
-  return new Intl.DateTimeFormat("vi-VN", {
-    timeZone: "Asia/Ho_Chi_Minh",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(new Date(value));
-}
-
-function formatDate(value: string) {
-  if (!value) return "";
-
-  const [year, month, day] = value.split("-");
-
-  if (!year || !month || !day) return value;
-
-  return `${day}/${month}/${year}`;
-}
-
-function getMonday(date = new Date()) {
-  const result = new Date(date);
-
-  result.setHours(0, 0, 0, 0);
-
-  const day = result.getDay();
-
-  const diff = day === 0 ? -6 : 1 - day;
-
-  result.setDate(result.getDate() + diff);
-
-  return result;
-}
-
-function getWeekDates(monday: Date) {
-  return Array.from({ length: 7 }, (_, index) => {
-    const date = new Date(monday);
-
-    date.setDate(monday.getDate() + index);
-
-    return date;
-  });
-}
-
-function getRequestTypeLabel(type: string) {
-  switch (type) {
-    case "late":
-      return "Xin đi muộn";
-
-    case "early_leave":
-      return "Xin về sớm";
-
-    case "overtime":
-      return "Xin tăng ca";
-
-    case "leave":
-      return "Xin nghỉ";
-
-    default:
-      return type;
-  }
-}
-
-function getStatusLabel(status: string) {
-  switch (status) {
-    case "pending":
-      return "Chờ duyệt";
-
-    case "approved":
-      return "Đã duyệt";
-
-    case "rejected":
-      return "Từ chối";
-
-    default:
-      return status;
-  }
-}
-
-function getStatusColor(status: string) {
-  switch (status) {
-    case "approved":
-      return "#1f7a45";
-
-    case "rejected":
-      return "#b42318";
-
-    default:
-      return "#9a6700";
-  }
-}
-
-export default function EmployeePage() {
+export default function AdminPage() {
   const router = useRouter();
 
-  const [employee, setEmployee] =
-    useState<Employee | null>(null);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [currentWeekStart, setCurrentWeekStart] = useState<Date>(() => {
+    const d = new Date();
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Thứ 2 làm đầu tuần
+    return new Date(d.setDate(diff));
+  });
 
-  const [attendance, setAttendance] =
-    useState<Attendance | null>(null);
-
-  const [todaySchedule, setTodaySchedule] =
-    useState<Schedule[]>([]);
-
-  const [weekSchedules, setWeekSchedules] =
-    useState<Schedule[]>([]);
-
-  const [requests, setRequests] =
-    useState<RequestItem[]>([]);
-
-  const [loading, setLoading] =
-    useState(true);
-
-  const [checkingIn, setCheckingIn] =
-    useState(false);
-
-  const [checkingOut, setCheckingOut] =
-    useState(false);
-
-  const [sendingRequest, setSendingRequest] =
-    useState(false);
-
-  const [weekStart, setWeekStart] =
-    useState<Date>(() => getMonday());
-
-  const [requestType, setRequestType] =
-    useState<RequestType>("late");
-
-  const [requestDate, setRequestDate] =
-    useState(getVietnamDateString());
-
-  const [requestStartTime, setRequestStartTime] =
-    useState("");
-
-  const [requestEndTime, setRequestEndTime] =
-    useState("");
-
-  const [requestReason, setRequestReason] =
-    useState("");
-
-  const weekDates = useMemo(() => {
-    return getWeekDates(weekStart);
-  }, [weekStart]);
-
-  const today = getVietnamDateString();
-
-  async function loadEmployeeData() {
-    setLoading(true);
-
-    try {
-      const {
-        data: { user },
-        error: userError,
-      } = await supabase.auth.getUser();
-
-      if (userError || !user) {
-        router.replace("/login");
-        return;
-      }
-
-      const {
-        data: employeeData,
-        error: employeeError,
-      } = await supabase
-        .from("employees")
-        .select(`
-          id,
-          full_name,
-          role,
-          active,
-          employment_type
-        `)
-        .eq("auth_user_id", user.id)
-        .single();
-
-      if (employeeError || !employeeData) {
-        console.error(employeeError);
-
-        alert(
-          "Không tìm thấy thông tin nhân viên."
-        );
-
-        await supabase.auth.signOut();
-
-        router.replace("/login");
-
-        return;
-      }
-
-      if (employeeData.active === false) {
-        alert("Tài khoản của bạn đã bị khóa.");
-
-        await supabase.auth.signOut();
-
-        router.replace("/login");
-
-        return;
-      }
-
-      if (employeeData.role === "admin") {
-        router.replace("/admin");
-        return;
-      }
-
-      setEmployee(employeeData);
-
-      await Promise.all([
-        loadTodayAttendance(employeeData.id),
-        loadTodaySchedule(employeeData.id),
-        loadWeekSchedules(employeeData.id),
-        loadRequests(employeeData.id),
-      ]);
-    } catch (error) {
-      console.error(error);
-
-      alert("Có lỗi khi tải dữ liệu.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function loadTodayAttendance(employeeId: string) {
-    const {
-      data,
-      error,
-    } = await supabase
-      .from("attendance")
-      .select(`
-        id,
-        employee_id,
-        work_date,
-        check_in,
-        check_out,
-        late_minutes,
-        makeup_minutes,
-        penalty_amount,
-        status
-      `)
-      .eq("employee_id", employeeId)
-      .eq("work_date", today)
-      .maybeSingle();
-
-    if (error) {
-      console.error(error);
-      return;
-    }
-
-    setAttendance(data || null);
-  }
-
-  async function loadTodaySchedule(employeeId: string) {
-    const {
-      data,
-      error,
-    } = await supabase
-      .from("schedules")
-      .select(`
-        id,
-        employee_id,
-        work_date,
-        start_time,
-        end_time,
-        note
-      `)
-      .eq("employee_id", employeeId)
-      .eq("work_date", today)
-      .order("start_time", {
-        ascending: true,
-      });
-
-    if (error) {
-      console.error(error);
-      return;
-    }
-
-    setTodaySchedule(data || []);
-  }
-
-  async function loadWeekSchedules(employeeId: string) {
-    const startDate = getVietnamDateString(
-      weekDates[0]
-    );
-
-    const endDate = getVietnamDateString(
-      weekDates[6]
-    );
-
-    const {
-      data,
-      error,
-    } = await supabase
-      .from("schedules")
-      .select(`
-        id,
-        employee_id,
-        work_date,
-        start_time,
-        end_time,
-        note
-      `)
-      .eq("employee_id", employeeId)
-      .gte("work_date", startDate)
-      .lte("work_date", endDate)
-      .order("work_date", {
-        ascending: true,
-      })
-      .order("start_time", {
-        ascending: true,
-      });
-
-    if (error) {
-      console.error(error);
-      return;
-    }
-
-    setWeekSchedules(data || []);
-  }
-
-  async function loadRequests(employeeId: string) {
-    const {
-      data,
-      error,
-    } = await supabase
-      .from("requests")
-      .select(`
-        id,
-        employee_id,
-        request_type,
-        request_date,
-        start_time,
-        end_time,
-        reason,
-        status,
-        admin_note,
-        created_at
-      `)
-      .eq("employee_id", employeeId)
-      .order("created_at", {
-        ascending: false,
-      });
-
-    if (error) {
-      console.error(error);
-
-      alert(
-        "Không thể tải yêu cầu. Kiểm tra bảng requests và RLS policy."
-      );
-
-      return;
-    }
-
-    setRequests(data || []);
-  }
+  // Lưu trữ lịch đã chọn trên giao diện dạng matrix: [user_id_date]: { start, end }
+  const [scheduleState, setScheduleState] = useState<{
+    [key: string]: { start: string; end: string };
+  }>({});
 
   useEffect(() => {
-    loadEmployeeData();
-  }, []);
+    fetchEmployeesAndSchedules();
+  }, [currentWeekStart]);
 
-  useEffect(() => {
-    if (!employee) return;
+  const getWeekDays = () => {
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(currentWeekStart);
+      d.setDate(d.getDate() + i);
+      days.push(d);
+    }
+    return days;
+  };
 
-    loadWeekSchedules(employee.id);
-  }, [weekStart]);
+  const weekDays = getWeekDays();
 
-  async function handleCheckIn() {
-    if (!employee) return;
+  async function fetchEmployeesAndSchedules() {
+    // 1. Tải danh sách nhân viên
+    const { data: empData, error: empErr } = await supabase
+      .from("employees")
+      .select("*")
+      .order("full_name");
 
-    if (attendance?.check_in) {
-      alert("Bạn đã check-in hôm nay rồi.");
+    if (empErr) {
+      console.error("Lỗi lấy danh sách nhân viên:", empErr);
+      return;
+    }
+    setEmployees(empData || []);
+
+    // 2. Tải lịch làm việc trong tuần hiện tại
+    const startDateStr = weekDays[0].toISOString().split("T")[0];
+    const endDateStr = weekDays[6].toISOString().split("T")[0];
+
+    const { data: schedData, error: schedErr } = await supabase
+      .from("schedules")
+      .select("*")
+      .gte("work_date", startDateStr)
+      .lte("work_date", endDateStr);
+
+    if (schedErr) {
+      console.error("Lỗi lấy lịch làm việc:", schedErr);
       return;
     }
 
-    setCheckingIn(true);
-
-    try {
-      const now = new Date();
-
-      const vietnamNow = getVietnamDate(now);
-
-      let lateMinutes = 0;
-
-      if (
-        todaySchedule.length > 0 &&
-        todaySchedule[0].start_time
-      ) {
-        const scheduledStart =
-          todaySchedule[0].start_time;
-
-        const [hours, minutes] =
-          scheduledStart
-            .slice(0, 5)
-            .split(":")
-            .map(Number);
-
-        const scheduledDate =
-          new Date(vietnamNow);
-
-        scheduledDate.setHours(
-          hours,
-          minutes,
-          0,
-          0
-        );
-
-        lateMinutes = Math.max(
-          0,
-          Math.floor(
-            (vietnamNow.getTime() -
-              scheduledDate.getTime()) /
-              60000
-          )
-        );
-      }
-
-      const {
-        data,
-        error,
-      } = await supabase
-        .from("attendance")
-        .insert({
-          employee_id: employee.id,
-          work_date: today,
-          check_in: now.toISOString(),
-          check_out: null,
-          late_minutes: lateMinutes,
-          makeup_minutes: 0,
-          penalty_amount: 0,
-          status: "checked_in",
-        })
-        .select()
-        .single();
-
-      if (error) {
-        console.error(error);
-
-        alert(
-          `Không thể check-in: ${error.message}`
-        );
-
-        return;
-      }
-
-      setAttendance(data);
-
-      alert("Check-in thành công.");
-    } catch (error) {
-      console.error(error);
-
-      alert("Có lỗi khi check-in.");
-    } finally {
-      setCheckingIn(false);
-    }
-  }
-
-  async function handleCheckOut() {
-    if (!attendance) {
-      alert("Bạn chưa check-in.");
-      return;
-    }
-
-    if (!attendance.check_in) {
-      alert("Bạn chưa check-in.");
-      return;
-    }
-
-    if (attendance.check_out) {
-      alert("Bạn đã check-out hôm nay rồi.");
-      return;
-    }
-
-    setCheckingOut(true);
-
-    try {
-      const now = new Date();
-
-      const {
-        data,
-        error,
-      } = await supabase
-        .from("attendance")
-        .update({
-          check_out: now.toISOString(),
-          status: "checked_out",
-        })
-        .eq("id", attendance.id)
-        .select()
-        .single();
-
-      if (error) {
-        console.error(error);
-
-        alert(
-          `Không thể check-out: ${error.message}`
-        );
-
-        return;
-      }
-
-      setAttendance(data);
-
-      alert("Check-out thành công.");
-    } catch (error) {
-      console.error(error);
-
-      alert("Có lỗi khi check-out.");
-    } finally {
-      setCheckingOut(false);
-    }
-  }
-
-  async function handleSubmitRequest() {
-    if (!employee) return;
-
-    if (!requestDate) {
-      alert("Vui lòng chọn ngày.");
-      return;
-    }
-
-    if (!requestReason.trim()) {
-      alert("Vui lòng nhập lý do.");
-      return;
-    }
-
-    if (
-      requestType !== "leave" &&
-      !requestStartTime
-    ) {
-      alert("Vui lòng chọn thời gian.");
-      return;
-    }
-
-    if (
-      requestType === "overtime" &&
-      !requestEndTime
-    ) {
-      alert("Vui lòng chọn giờ kết thúc tăng ca.");
-      return;
-    }
-
-    setSendingRequest(true);
-
-    try {
-      const {
-        error,
-      } = await supabase
-        .from("requests")
-        .insert({
-          employee_id: employee.id,
-          request_type: requestType,
-          request_date: requestDate,
-          start_time:
-            requestStartTime || null,
-          end_time:
-            requestEndTime || null,
-          reason:
-            requestReason.trim(),
-          status: "pending",
-        });
-
-      if (error) {
-        console.error(error);
-
-        alert(
-          `Không thể gửi yêu cầu: ${error.message}`
-        );
-
-        return;
-      }
-
-      alert("Đã gửi yêu cầu.");
-
-      setRequestType("late");
-
-      setRequestDate(
-        getVietnamDateString()
-      );
-
-      setRequestStartTime("");
-
-      setRequestEndTime("");
-
-      setRequestReason("");
-
-      await loadRequests(employee.id);
-    } catch (error) {
-      console.error(error);
-
-      alert("Có lỗi khi gửi yêu cầu.");
-    } finally {
-      setSendingRequest(false);
-    }
-  }
-
-  async function handleLogout() {
-    await supabase.auth.signOut();
-
-    router.replace("/login");
-  }
-
-  function previousWeek() {
-    setWeekStart((prev) => {
-      const date = new Date(prev);
-
-      date.setDate(date.getDate() - 7);
-
-      return date;
+    const initialMap: { [key: string]: { start: string; end: string } } = {};
+    schedData?.forEach((item: ScheduleRecord) => {
+      const key = `${item.user_id}_${item.work_date}`;
+      initialMap[key] = {
+        start: item.start_time || "",
+        end: item.end_time || "",
+      };
     });
+
+    setScheduleState(initialMap);
   }
 
-  function nextWeek() {
-    setWeekStart((prev) => {
-      const date = new Date(prev);
+  // Chuyển đổi ca chọn từ dropdown Full-time
+  const handleFullTimeChange = (
+    userId: string,
+    dateStr: string,
+    val: string
+  ) => {
+    const key = `${userId}_${dateStr}`;
+    if (val === "Chọn ca" || val === "Nghỉ") {
+      setScheduleState((prev) => ({
+        ...prev,
+        [key]: { start: val === "Nghỉ" ? "OFF" : "", end: "" },
+      }));
+    } else {
+      const [start, end] = val.split(" - ");
+      setScheduleState((prev) => ({
+        ...prev,
+        [key]: { start, end },
+      }));
+    }
+  };
 
-      date.setDate(date.getDate() + 7);
+  // Cập nhật giờ bắt đầu/kết thúc cho Part-time
+  const handlePartTimeChange = (
+    userId: string,
+    dateStr: string,
+    field: "start" | "end",
+    val: string
+  ) => {
+    const key = `${userId}_${dateStr}`;
+    setScheduleState((prev) => ({
+      ...prev,
+      [key]: {
+        start: field === "start" ? val : prev[key]?.start || "",
+        end: field === "end" ? val : prev[key]?.end || "",
+      },
+    }));
+  };
 
-      return date;
-    });
-  }
+  // Lưu lịch làm việc xuống cơ sở dữ liệu Supabase
+  const handleSaveShift = async (userId: string, dateStr: string) => {
+    const key = `${userId}_${dateStr}`;
+    const shift = scheduleState[key];
 
-  function currentWeek() {
-    setWeekStart(getMonday());
-  }
+    if (!shift || (!shift.start && !shift.end)) {
+      alert("Vui lòng chọn hoặc nhập thời gian ca làm!");
+      return;
+    }
 
-  function getScheduleForDate(date: Date) {
-    const dateString =
-      getVietnamDateString(date);
+    const payload = {
+      user_id: userId,
+      work_date: dateStr,
+      start_time: shift.start === "OFF" ? "Nghỉ" : shift.start,
+      end_time: shift.start === "OFF" ? "Nghỉ" : shift.end,
+    };
 
-    return weekSchedules.filter(
-      (item) =>
-        item.work_date === dateString
-    );
-  }
+    const { error } = await supabase
+      .from("schedules")
+      .upsert(payload, { onConflict: "user_id,work_date" });
 
-  if (loading) {
-    return (
-      <main
-        style={{
-          minHeight: "100vh",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontFamily: "Arial, sans-serif",
-          background: "#f4f1ec",
-        }}
-      >
-        Đang tải...
-      </main>
-    );
-  }
+    if (error) {
+      alert("Lưu thất bại: " + error.message);
+    } else {
+      alert("Đã lưu lịch làm việc thành công!");
+    }
+  };
 
-  const checkedIn =
-    Boolean(attendance?.check_in);
+  const handlePrevWeek = () => {
+    const p = new Date(currentWeekStart);
+    p.setDate(p.getDate() - 7);
+    setCurrentWeekStart(p);
+  };
 
-  const checkedOut =
-    Boolean(attendance?.check_out);
-
-  const weekLabel =
-    `${formatDate(
-      getVietnamDateString(weekDates[0])
-    )} - ${formatDate(
-      getVietnamDateString(weekDates[6])
-    )}`;
+  const handleNextWeek = () => {
+    const n = new Date(currentWeekStart);
+    n.setDate(n.getDate() + 7);
+    setCurrentWeekStart(n);
+  };
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        background: "#f4f1ec",
-        fontFamily: "Arial, sans-serif",
-        color: "#2f3e46",
-        paddingBottom: "60px",
-      }}
-    >
-      {/* HEADER */}
-
-      <header
-        style={{
-          background: "#ffffff",
-          padding: "24px 5%",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          boxShadow:
-            "0 1px 8px rgba(0,0,0,0.04)",
-        }}
-      >
-        <div>
-          <h1
-            style={{
-              margin: 0,
-              fontSize: "34px",
-              letterSpacing: "2px",
-            }}
-          >
-            SOBA STAFF
-          </h1>
-
-          <p
-            style={{
-              margin: "8px 0 0",
-              color: "#6b7280",
-            }}
-          >
-            Giao diện nhân viên
-          </p>
+    <div style={{ padding: "24px", fontFamily: "sans-serif", background: "#f8f9fa" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+        <h2>Quản Lý Lịch Làm Việc (Admin)</h2>
+        <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+          <button onClick={handlePrevWeek} style={btnStyle}>← Tuần trước</button>
+          <strong>
+            {weekDays[0].toLocaleDateString("vi-VN")} - {weekDays[6].toLocaleDateString("vi-VN")}
+          </strong>
+          <button onClick={handleNextWeek} style={btnStyle}>Tuần sau →</button>
         </div>
-
-        <button
-          onClick={handleLogout}
-          style={{
-            background: "#365d4b",
-            color: "#fff",
-            border: "none",
-            borderRadius: "12px",
-            padding: "14px 22px",
-            cursor: "pointer",
-            fontWeight: 600,
-          }}
-        >
-          Đăng xuất
-        </button>
-      </header>
-
-      <div
-        style={{
-          maxWidth: "1100px",
-          margin: "0 auto",
-          padding: "24px",
-        }}
-      >
-        {/* THÔNG TIN NHÂN VIÊN */}
-
-        <section
-          style={{
-            background: "#365d4b",
-            color: "#fff",
-            borderRadius: "26px",
-            padding: "30px",
-            marginBottom: "24px",
-          }}
-        >
-          <div
-            style={{
-              fontSize: "16px",
-              opacity: 0.8,
-              marginBottom: "10px",
-            }}
-          >
-            Xin chào
-          </div>
-
-          <h2
-            style={{
-              margin: 0,
-              fontSize: "30px",
-            }}
-          >
-            {employee?.full_name}
-          </h2>
-
-          <p
-            style={{
-              marginBottom: 0,
-              opacity: 0.85,
-            }}
-          >
-            {employee?.employment_type ||
-              "Nhân viên"}
-          </p>
-        </section>
-
-        {/* CHẤM CÔNG */}
-
-        <section
-          style={{
-            background: "#fff",
-            borderRadius: "26px",
-            padding: "26px",
-            marginBottom: "24px",
-          }}
-        >
-          <h2
-            style={{
-              marginTop: 0,
-            }}
-          >
-            Chấm công hôm nay
-          </h2>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns:
-                "repeat(auto-fit, minmax(220px, 1fr))",
-              gap: "16px",
-              marginBottom: "16px",
-            }}
-          >
-            <div
-              style={{
-                background: "#f3f4f6",
-                borderRadius: "18px",
-                padding: "22px",
-              }}
-            >
-              <div
-                style={{
-                  color: "#6b7280",
-                  marginBottom: "12px",
-                }}
-              >
-                Check-in
-              </div>
-
-              <strong
-                style={{
-                  fontSize: "26px",
-                }}
-              >
-                {formatTime(
-                  attendance?.check_in || null
-                )}
-              </strong>
-            </div>
-
-            <div
-              style={{
-                background: "#f3f4f6",
-                borderRadius: "18px",
-                padding: "22px",
-              }}
-            >
-              <div
-                style={{
-                  color: "#6b7280",
-                  marginBottom: "12px",
-                }}
-              >
-                Check-out
-              </div>
-
-              <strong
-                style={{
-                  fontSize: "26px",
-                }}
-              >
-                {formatTime(
-                  attendance?.check_out || null
-                )}
-              </strong>
-            </div>
-          </div>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns:
-                "repeat(auto-fit, minmax(220px, 1fr))",
-              gap: "14px",
-            }}
-          >
-            <button
-              onClick={handleCheckIn}
-              disabled={
-                checkedIn || checkingIn
-              }
-              style={{
-                padding: "16px",
-                borderRadius: "12px",
-                border: "none",
-                background:
-                  checkedIn
-                    ? "#9ca3af"
-                    : "#365d4b",
-                color: "#fff",
-                cursor:
-                  checkedIn
-                    ? "not-allowed"
-                    : "pointer",
-                fontWeight: 700,
-              }}
-            >
-              {checkingIn
-                ? "Đang check-in..."
-                : checkedIn
-                ? "ĐÃ CHECK-IN"
-                : "CHECK-IN"}
-            </button>
-
-            <button
-              onClick={handleCheckOut}
-              disabled={
-                !checkedIn ||
-                checkedOut ||
-                checkingOut
-              }
-              style={{
-                padding: "16px",
-                borderRadius: "12px",
-                border: "none",
-                background:
-                  !checkedIn || checkedOut
-                    ? "#9ca3af"
-                    : "#365d4b",
-                color: "#fff",
-                cursor:
-                  !checkedIn || checkedOut
-                    ? "not-allowed"
-                    : "pointer",
-                fontWeight: 700,
-              }}
-            >
-              {checkingOut
-                ? "Đang check-out..."
-                : checkedOut
-                ? "ĐÃ CHECK-OUT"
-                : "CHECK-OUT"}
-            </button>
-          </div>
-        </section>
-
-        {/* LỊCH LÀM */}
-
-        <section
-          style={{
-            background: "#fff",
-            borderRadius: "26px",
-            padding: "26px",
-            marginBottom: "24px",
-          }}
-        >
-          <h2
-            style={{
-              marginTop: 0,
-            }}
-          >
-            Lịch làm việc
-          </h2>
-
-          <div
-            style={{
-              display: "flex",
-              justifyContent:
-                "space-between",
-              alignItems: "center",
-              gap: "12px",
-              flexWrap: "wrap",
-              marginBottom: "24px",
-            }}
-          >
-            <button
-              onClick={previousWeek}
-              style={{
-                border: "none",
-                borderRadius: "10px",
-                padding: "12px 18px",
-                cursor: "pointer",
-              }}
-            >
-              ← Tuần trước
-            </button>
-
-            <div
-              style={{
-                textAlign: "center",
-              }}
-            >
-              <strong>
-                {weekLabel}
-              </strong>
-
-              <div
-                style={{
-                  marginTop: "8px",
-                }}
-              >
-                <button
-                  onClick={currentWeek}
-                  style={{
-                    background: "#365d4b",
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: "10px",
-                    padding:
-                      "8px 16px",
-                    cursor: "pointer",
-                  }}
-                >
-                  Về tuần này
-                </button>
-              </div>
-            </div>
-
-            <button
-              onClick={nextWeek}
-              style={{
-                border: "none",
-                borderRadius: "10px",
-                padding: "12px 18px",
-                cursor: "pointer",
-              }}
-            >
-              Tuần sau →
-            </button>
-          </div>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns:
-                "repeat(auto-fit, minmax(140px, 1fr))",
-              gap: "12px",
-            }}
-          >
-            {weekDates.map(
-              (date, index) => {
-                const daySchedules =
-                  getScheduleForDate(date);
-
-                const isToday =
-                  getVietnamDateString(date) ===
-                  today;
-
-                const dayName =
-                  [
-                    "Thứ 2",
-                    "Thứ 3",
-                    "Thứ 4",
-                    "Thứ 5",
-                    "Thứ 6",
-                    "Thứ 7",
-                    "Chủ nhật",
-                  ][index];
-
-                return (
-                  <div
-                    key={
-                      date.toISOString()
-                    }
-                    style={{
-                      border: isToday
-                        ? "2px solid #365d4b"
-                        : "1px solid #e5e7eb",
-                      borderRadius: "16px",
-                      padding: "16px",
-                      minHeight: "130px",
-                      background: isToday
-                        ? "#f0f6f2"
-                        : "#fff",
-                    }}
-                  >
-                    <strong>
-                      {dayName}
-                    </strong>
-
-                    <div
-                      style={{
-                        color: "#6b7280",
-                        margin:
-                          "6px 0 14px",
-                      }}
-                    >
-                      {formatDate(
-                        getVietnamDateString(
-                          date
-                        )
-                      )}
-                    </div>
-
-                    {daySchedules.length ===
-                    0 ? (
-                      <div
-                        style={{
-                          color:
-                            "#9ca3af",
-                        }}
-                      >
-                        Nghỉ
-                      </div>
-                    ) : (
-                      daySchedules.map(
-                        (schedule) => (
-                          <div
-                            key={
-                              schedule.id
-                            }
-                            style={{
-                              background:
-                                "#e8efea",
-                              padding:
-                                "8px 10px",
-                              borderRadius:
-                                "8px",
-                              marginBottom:
-                                "8px",
-                              fontWeight:
-                                600,
-                            }}
-                          >
-                            {formatTime(
-                              schedule.start_time
-                            )}{" "}
-                            -{" "}
-                            {formatTime(
-                              schedule.end_time
-                            )}
-                          </div>
-                        )
-                      )
-                    )}
-                  </div>
-                );
-              }
-            )}
-          </div>
-        </section>
-
-        {/* GỬI YÊU CẦU */}
-
-        <section
-          style={{
-            background: "#fff",
-            borderRadius: "26px",
-            padding: "26px",
-            marginBottom: "24px",
-          }}
-        >
-          <h2
-            style={{
-              marginTop: 0,
-            }}
-          >
-            Gửi yêu cầu
-          </h2>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns:
-                "repeat(auto-fit, minmax(180px, 1fr))",
-              gap: "12px",
-              marginBottom: "16px",
-            }}
-          >
-            <button
-              onClick={() =>
-                setRequestType("late")
-              }
-              style={{
-                padding: "14px",
-                borderRadius: "10px",
-                border:
-                  requestType === "late"
-                    ? "2px solid #365d4b"
-                    : "1px solid #ddd",
-                background:
-                  requestType === "late"
-                    ? "#e8efea"
-                    : "#fff",
-                cursor: "pointer",
-              }}
-            >
-              Đi muộn
-            </button>
-
-            <button
-              onClick={() =>
-                setRequestType(
-                  "early_leave"
-                )
-              }
-              style={{
-                padding: "14px",
-                borderRadius: "10px",
-                border:
-                  requestType ===
-                  "early_leave"
-                    ? "2px solid #365d4b"
-                    : "1px solid #ddd",
-                background:
-                  requestType ===
-                  "early_leave"
-                    ? "#e8efea"
-                    : "#fff",
-                cursor: "pointer",
-              }}
-            >
-              Về sớm
-            </button>
-
-            <button
-              onClick={() =>
-                setRequestType(
-                  "overtime"
-                )
-              }
-              style={{
-                padding: "14px",
-                borderRadius: "10px",
-                border:
-                  requestType ===
-                  "overtime"
-                    ? "2px solid #365d4b"
-                    : "1px solid #ddd",
-                background:
-                  requestType ===
-                  "overtime"
-                    ? "#e8efea"
-                    : "#fff",
-                cursor: "pointer",
-              }}
-            >
-              Tăng ca
-            </button>
-
-            <button
-              onClick={() =>
-                setRequestType("leave")
-              }
-              style={{
-                padding: "14px",
-                borderRadius: "10px",
-                border:
-                  requestType ===
-                  "leave"
-                    ? "2px solid #365d4b"
-                    : "1px solid #ddd",
-                background:
-                  requestType ===
-                  "leave"
-                    ? "#e8efea"
-                    : "#fff",
-                cursor: "pointer",
-              }}
-            >
-              Xin nghỉ
-            </button>
-          </div>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns:
-                "repeat(auto-fit, minmax(200px, 1fr))",
-              gap: "14px",
-              marginBottom: "14px",
-            }}
-          >
-            <div>
-              <label>
-                Ngày yêu cầu
-              </label>
-
-              <input
-                type="date"
-                value={requestDate}
-                onChange={(event) =>
-                  setRequestDate(
-                    event.target.value
-                  )
-                }
-                style={{
-                  width: "100%",
-                  marginTop: "8px",
-                  padding: "14px",
-                  borderRadius: "10px",
-                  border:
-                    "1px solid #ddd",
-                  boxSizing:
-                    "border-box",
-                }}
-              />
-            </div>
-
-            {requestType !==
-              "leave" && (
-              <div>
-                <label>
-                  {requestType ===
-                  "early_leave"
-                    ? "Giờ muốn về"
-                    : requestType ===
-                      "overtime"
-                    ? "Bắt đầu tăng ca"
-                    : "Giờ dự kiến đến"}
-                </label>
-
-                <input
-                  type="time"
-                  value={
-                    requestStartTime
-                  }
-                  onChange={(event) =>
-                    setRequestStartTime(
-                      event.target.value
-                    )
-                  }
-                  style={{
-                    width: "100%",
-                    marginTop: "8px",
-                    padding: "14px",
-                    borderRadius:
-                      "10px",
-                    border:
-                      "1px solid #ddd",
-                    boxSizing:
-                      "border-box",
-                  }}
-                />
-              </div>
-            )}
-
-            {requestType ===
-              "overtime" && (
-              <div>
-                <label>
-                  Kết thúc tăng ca
-                </label>
-
-                <input
-                  type="time"
-                  value={
-                    requestEndTime
-                  }
-                  onChange={(event) =>
-                    setRequestEndTime(
-                      event.target.value
-                    )
-                  }
-                  style={{
-                    width: "100%",
-                    marginTop: "8px",
-                    padding: "14px",
-                    borderRadius:
-                      "10px",
-                    border:
-                      "1px solid #ddd",
-                    boxSizing:
-                      "border-box",
-                  }}
-                />
-              </div>
-            )}
-          </div>
-
-          <textarea
-            value={requestReason}
-            onChange={(event) =>
-              setRequestReason(
-                event.target.value
-              )
-            }
-            placeholder="Lý do..."
-            rows={5}
-            style={{
-              width: "100%",
-              padding: "16px",
-              borderRadius: "12px",
-              border: "1px solid #ddd",
-              boxSizing: "border-box",
-              resize: "vertical",
-              marginBottom: "14px",
-            }}
-          />
-
-          <button
-            onClick={
-              handleSubmitRequest
-            }
-            disabled={sendingRequest}
-            style={{
-              width: "100%",
-              padding: "16px",
-              border: "none",
-              borderRadius: "12px",
-              background: "#365d4b",
-              color: "#fff",
-              fontWeight: 700,
-              cursor: "pointer",
-            }}
-          >
-            {sendingRequest
-              ? "Đang gửi..."
-              : "Gửi yêu cầu"}
-          </button>
-        </section>
-
-        {/* YÊU CẦU CỦA TÔI */}
-
-        <section
-          style={{
-            background: "#fff",
-            borderRadius: "26px",
-            padding: "26px",
-          }}
-        >
-          <h2
-            style={{
-              marginTop: 0,
-            }}
-          >
-            Yêu cầu của tôi
-          </h2>
-
-          {requests.length === 0 ? (
-            <div
-              style={{
-                color: "#6b7280",
-                padding: "20px 0",
-              }}
-            >
-              Chưa có yêu cầu nào.
-            </div>
-          ) : (
-            <div
-              style={{
-                display: "grid",
-                gap: "14px",
-              }}
-            >
-              {requests.map(
-                (request) => (
-                  <div
-                    key={request.id}
-                    style={{
-                      border:
-                        "1px solid #e5e7eb",
-                      borderRadius:
-                        "14px",
-                      padding: "18px",
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent:
-                          "space-between",
-                        gap: "10px",
-                        flexWrap: "wrap",
-                        marginBottom:
-                          "10px",
-                      }}
-                    >
-                      <strong>
-                        {getRequestTypeLabel(
-                          request.request_type
-                        )}
-                      </strong>
-
-                      <span
-                        style={{
-                          color:
-                            getStatusColor(
-                              request.status
-                            ),
-                          fontWeight:
-                            700,
-                        }}
-                      >
-                        {getStatusLabel(
-                          request.status
-                        )}
-                      </span>
-                    </div>
-
-                    <div
-                      style={{
-                        color: "#6b7280",
-                        marginBottom:
-                          "8px",
-                      }}
-                    >
-                      Ngày:{" "}
-                      {formatDate(
-                        request.request_date
-                      )}
-                    </div>
-
-                    {(request.start_time ||
-                      request.end_time) && (
-                      <div
-                        style={{
-                          marginBottom:
-                            "8px",
-                        }}
-                      >
-                        Thời gian:{" "}
-                        {formatTime(
-                          request.start_time
-                        )}
-
-                        {request.end_time &&
-                          ` - ${formatTime(
-                            request.end_time
-                          )}`}
-                      </div>
-                    )}
-
-                    {request.reason && (
-                      <div>
-                        Lý do:{" "}
-                        {request.reason}
-                      </div>
-                    )}
-
-                    {request.admin_note && (
-                      <div
-                        style={{
-                          marginTop:
-                            "10px",
-                          background:
-                            "#f3f4f6",
-                          padding:
-                            "10px",
-                          borderRadius:
-                            "8px",
-                        }}
-                      >
-                        Ghi chú quản lý:{" "}
-                        {request.admin_note}
-                      </div>
-                    )}
-                  </div>
-                )
-              )}
-            </div>
-          )}
-        </section>
       </div>
-    </main>
+
+      <div style={{ overflowX: "auto", background: "#fff", borderRadius: "8px", padding: "16px", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
+          <thead>
+            <tr style={{ borderBottom: "2px solid #ddd" }}>
+              <th style={{ padding: "12px", minWidth: "160px" }}>Nhân viên</th>
+              {weekDays.map((d, i) => (
+                <th key={i} style={{ padding: "12px", minWidth: "140px", textAlign: "center" }}>
+                  {["T2", "T3", "T4", "T5", "T6", "T7", "CN"][i]}
+                  <br />
+                  <span style={{ fontSize: "12px", color: "#666" }}>
+                    {d.getDate()}/{d.getMonth() + 1}
+                  </span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {employees.map((emp) => (
+              <tr key={emp.id} style={{ borderBottom: "1px solid #eee" }}>
+                <td style={{ padding: "12px" }}>
+                  <strong>{emp.full_name}</strong>
+                  <div style={{ fontSize: "12px", color: "#666" }}>
+                    {emp.type === "full_time" ? "Full-time" : "Part-time"}
+                  </div>
+                </td>
+
+                {weekDays.map((d, i) => {
+                  const dateStr = d.toISOString().split("T")[0];
+                  const key = `${emp.user_id}_${dateStr}`;
+                  const currentData = scheduleState[key] || { start: "", end: "" };
+
+                  return (
+                    <td key={i} style={{ padding: "8px", textAlign: "center" }}>
+                      {emp.type === "full_time" ? (
+                        /* Giao diện dành cho Full-time */
+                        <div>
+                          <select
+                            value={
+                              currentData.start === "OFF"
+                                ? "Nghỉ"
+                                : currentData.start && currentData.end
+                                ? `${currentData.start} - ${currentData.end}`
+                                : "Chọn ca"
+                            }
+                            onChange={(e) =>
+                              handleFullTimeChange(emp.user_id, dateStr, e.target.value)
+                            }
+                            style={inputStyle}
+                          >
+                            {FULL_TIME_SHIFTS.map((s) => (
+                              <option key={s} value={s}>
+                                {s}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ) : (
+                        /* Giao diện dành cho Part-time */
+                        <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                          <input
+                            type="time"
+                            value={currentData.start || ""}
+                            onChange={(e) =>
+                              handlePartTimeChange(emp.user_id, dateStr, "start", e.target.value)
+                            }
+                            style={inputStyle}
+                          />
+                          <input
+                            type="time"
+                            value={currentData.end || ""}
+                            onChange={(e) =>
+                              handlePartTimeChange(emp.user_id, dateStr, "end", e.target.value)
+                            }
+                            style={inputStyle}
+                          />
+                        </div>
+                      )}
+
+                      <button
+                        onClick={() => handleSaveShift(emp.user_id, dateStr)}
+                        style={saveBtnStyle}
+                      >
+                        Lưu
+                      </button>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
+
+const btnStyle = {
+  background: "#e8ece9",
+  border: "none",
+  padding: "8px 14px",
+  borderRadius: "6px",
+  cursor: "pointer",
+  fontWeight: "bold" as const,
+};
+
+const inputStyle = {
+  width: "100%",
+  padding: "6px",
+  borderRadius: "4px",
+  border: "1px solid #ccc",
+  marginBottom: "4px",
+  boxSizing: "border-box" as const,
+  fontSize: "13px",
+};
+
+const saveBtnStyle = {
+  width: "100%",
+  background: "#2d5240",
+  color: "#fff",
+  border: "none",
+  padding: "6px",
+  borderRadius: "4px",
+  cursor: "pointer",
+  fontWeight: "bold" as const,
+  fontSize: "12px",
+};
