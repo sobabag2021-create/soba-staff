@@ -15,22 +15,47 @@ export default function AdminPage() {
   useEffect(() => {
     async function loadAdmin() {
       try {
+        // Kiểm tra người dùng đang đăng nhập
         const {
           data: { user },
+          error: authError,
         } = await supabase.auth.getUser();
 
-        if (!user) {
-          setLoading(false);
+        if (authError || !user) {
+          window.location.href = "/login";
           return;
         }
 
+        // Lấy thông tin admin từ bảng employees
+        // Cột đúng trong Supabase là auth_user_id
         const { data, error } = await supabase
           .from("employees")
-          .select("full_name")
-          .eq("user_id", user.id)
-          .maybeSingle<AdminProfile>();
+          .select("full_name, role")
+          .eq("auth_user_id", user.id)
+          .maybeSingle();
 
-        if (!error && data?.full_name) {
+        if (error) {
+          console.error("Lỗi tải thông tin admin:", error);
+          return;
+        }
+
+        if (!data) {
+          alert(
+            "Tài khoản này chưa có thông tin trong bảng employees."
+          );
+
+          await supabase.auth.signOut();
+          window.location.href = "/login";
+          return;
+        }
+
+        // Chỉ cho admin vào trang quản trị
+        if (data.role !== "admin") {
+          window.location.href = "/";
+          return;
+        }
+
+        if (data.full_name) {
           setAdminName(data.full_name);
         }
       } catch (error) {
@@ -98,6 +123,7 @@ export default function AdminPage() {
         </nav>
 
         <button
+          type="button"
           className="sidebar-logout"
           onClick={handleLogout}
         >
@@ -116,6 +142,7 @@ export default function AdminPage() {
           </div>
 
           <button
+            type="button"
             className="logout-button"
             onClick={handleLogout}
           >
