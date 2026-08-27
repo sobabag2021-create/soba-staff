@@ -1,99 +1,189 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
 
-export default function LoginPage() {
+type User = {
+  id: string;
+  full_name: string;
+  role: string;
+};
+
+export default function AdminPage() {
   const router = useRouter();
 
-  const [username, setUsername] =
-    useState("");
+  const [user, setUser] =
+    useState<User | null>(null);
 
-  const [password, setPassword] =
-    useState("");
+  useEffect(() => {
+    const savedUser =
+      localStorage.getItem("soba_staff_user");
 
-  const [message, setMessage] =
-    useState("");
-
-  async function handleLogin() {
-    setMessage("");
-
-    if (!username.trim() || !password.trim()) {
-      setMessage(
-        "Vui lòng nhập tài khoản và mật khẩu."
-      );
+    if (!savedUser) {
+      router.replace("/login");
       return;
     }
 
-    const { data, error } = await supabase
-      .from("employees")
-      .select("*")
-      .eq("username", username.trim())
-      .eq("password", password.trim())
-      .maybeSingle();
+    const parsedUser =
+      JSON.parse(savedUser);
 
-    if (error) {
-      setMessage(error.message);
+    if (parsedUser.role !== "admin") {
+      router.replace("/employee");
       return;
     }
 
-    if (!data) {
-      setMessage(
-        "Tài khoản hoặc mật khẩu không đúng."
-      );
-      return;
-    }
+    setUser(parsedUser);
+  }, [router]);
 
-    localStorage.setItem(
-      "soba_staff_user",
-      JSON.stringify(data)
+  function handleLogout() {
+    localStorage.removeItem(
+      "soba_staff_user"
     );
 
-    if (data.role === "admin") {
-      router.push("/admin");
-    } else {
-      router.push("/employee");
-    }
+    router.push("/login");
   }
 
   return (
-    <main className="login-page">
-      <div className="login-card">
-        <h1>SOBA STAFF</h1>
+    <div className="admin-layout">
+      <aside className="sidebar">
+        <div className="logo">
+          SOBA
+          <br />
+          STAFF
+        </div>
 
-        <p>
-          Hệ thống quản lý nhân viên
-        </p>
+        <nav>
+          <Link
+            href="/admin"
+            className="active-menu"
+          >
+            Dashboard
+          </Link>
 
-        <input
-          type="text"
-          placeholder="Tài khoản"
-          value={username}
-          onChange={(e) =>
-            setUsername(e.target.value)
-          }
-        />
+          <Link href="/admin/employees">
+            Nhân viên
+          </Link>
 
-        <input
-          type="password"
-          placeholder="Mật khẩu"
-          value={password}
-          onChange={(e) =>
-            setPassword(e.target.value)
-          }
-        />
+          <Link href="/admin/schedule">
+            Lịch làm
+          </Link>
 
-        <button onClick={handleLogin}>
-          Đăng nhập
+          <Link href="/admin/requests">
+            Đơn từ
+          </Link>
+
+          <Link href="/admin/attendance">
+            Chấm công
+          </Link>
+
+          <Link href="/admin/report">
+            Báo cáo
+          </Link>
+        </nav>
+
+        <button
+          className="sidebar-logout"
+          onClick={handleLogout}
+        >
+          Đăng xuất
         </button>
+      </aside>
 
-        {message && (
-          <div className="error-message">
-            {message}
+      <main className="admin-main">
+        <div className="admin-topbar">
+          <div>
+            <h1>Trang quản trị</h1>
+
+            <p>
+              Quản lý nhân viên và hoạt động
+              cửa hàng
+            </p>
           </div>
-        )}
-      </div>
-    </main>
+
+          <button
+            className="logout-button"
+            onClick={handleLogout}
+          >
+            Đăng xuất
+          </button>
+        </div>
+
+        <section className="admin-welcome">
+          <p>Xin chào Admin</p>
+
+          <h2>
+            {user?.full_name || "chị Hà"}
+          </h2>
+
+          <span>
+            Quản lý nhân viên, lịch làm,
+            chấm công và đơn từ
+          </span>
+        </section>
+
+        <section className="dashboard-grid">
+          <Link
+            href="/admin/employees"
+            className="dashboard-card"
+          >
+            <h3>Nhân viên</h3>
+
+            <p>
+              Quản lý thông tin và tài khoản
+              nhân viên
+            </p>
+          </Link>
+
+          <Link
+            href="/admin/schedule"
+            className="dashboard-card"
+          >
+            <h3>Lịch làm</h3>
+
+            <p>
+              Xếp lịch làm việc theo tuần cho
+              nhân viên
+            </p>
+          </Link>
+
+          <Link
+            href="/admin/requests"
+            className="dashboard-card"
+          >
+            <h3>Đơn từ</h3>
+
+            <p>
+              Duyệt đơn xin nghỉ, đi muộn,
+              về sớm và tăng ca
+            </p>
+          </Link>
+
+          <Link
+            href="/admin/attendance"
+            className="dashboard-card"
+          >
+            <h3>Chấm công</h3>
+
+            <p>
+              Theo dõi thời gian check-in và
+              check-out
+            </p>
+          </Link>
+
+          <Link
+            href="/admin/report"
+            className="dashboard-card"
+          >
+            <h3>Báo cáo</h3>
+
+            <p>
+              Xem tổng hợp chấm công và hoạt
+              động nhân viên
+            </p>
+          </Link>
+        </section>
+      </main>
+    </div>
   );
 }
