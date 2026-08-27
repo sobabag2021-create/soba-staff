@@ -210,10 +210,10 @@ export default function EmployeeDashboard() {
                   borderRadius: "12px",
                   border: isToday ? "2px solid #2d5240" : "1px solid #e2e8f0",
                   background: "#ffffff",
-                  display: "flex",
-                  flexDirection: "column",
-                  justify: "space-between",
-                  minHeight: "80px",
+                 display: "flex",
+  flexDirection: "column",
+  justifyContent: "space-between", // <--- Sửa thành justifyContent
+  minHeight: "80px",
                 }}
               >
                 <div>
